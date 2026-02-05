@@ -416,7 +416,8 @@ impl ChessApp {
     }
 
     /// Apply a move clicked from engine analysis (creates a fork/variation)
-    fn apply_engine_move(&mut self, uci_move: &str) {
+    /// Returns true if move was successfully applied
+    fn apply_engine_move(&mut self, uci_move: &str) -> bool {
         use shakmaty::uci::UciMove;
         
         // Parse the UCI move
@@ -428,7 +429,6 @@ impl ChessApp {
                     // Apply the move
                     if let Some(record) = self.make_move(m) {
                         // In Analysis mode, this creates a variation/fork
-                        // The analysis will automatically restart at the new position
                         tracing::info!("Applied engine move: {} (fork)", record.san);
                         
                         // Restart analysis at new position
@@ -436,10 +436,67 @@ impl ChessApp {
                             self.stop_analysis();
                             self.start_analysis();
                         }
+                        return true;
                     }
                 }
             }
         }
+        false
+    }
+
+    /// Export current game as PGN
+    fn export_game_pgn(&self) -> String {
+        use chrono::Local;
+        
+        let mut pgn = String::new();
+        
+        // Headers
+        pgn.push_str(&format!("[Event \"Stockfish Chess Game\"]\n"));
+        pgn.push_str(&format!("[Site \"Local\"]\n"));
+        pgn.push_str(&format!("[Date \"{}\"]\n", Local::now().format("%Y.%m.%d")));
+        pgn.push_str(&format!("[Round \"-\"]\n"));
+        pgn.push_str(&format!("[White \"Player\"]\n"));
+        pgn.push_str(&format!("[Black \"Stockfish\"]\n"));
+        
+        // Result
+        let result = match self.game.outcome() {
+            GameOutcome::Checkmate(PlayerColor::White) => "1-0",
+            GameOutcome::Checkmate(PlayerColor::Black) => "0-1",
+            GameOutcome::Stalemate | GameOutcome::InsufficientMaterial | 
+            GameOutcome::ThreefoldRepetition | GameOutcome::FiftyMoveRule => "1/2-1/2",
+            GameOutcome::InProgress => "*",
+        };
+        pgn.push_str(&format!("[Result \"{}\"]\n", result));
+        pgn.push('\n');
+        
+        // Moves
+        for (i, record) in self.game.move_history().iter().enumerate() {
+            if i % 2 == 0 {
+                pgn.push_str(&format!("{}. ", i / 2 + 1));
+            }
+            pgn.push_str(&record.san);
+            pgn.push(' ');
+        }
+        
+        pgn.push_str(result);
+        pgn.push('\n');
+        
+        pgn
+    }
+
+    /// Save current game to a new study
+    fn save_game_to_study(&mut self) {
+        let mut new_study = Study::new(format!("Game {}", chrono::Local::now().format("%Y-%m-%d %H:%M")));
+        
+        // Replay all moves into the study
+        let moves: Vec<_> = self.game.move_history().iter().cloned().collect();
+        for record in moves {
+            new_study.current_chapter_mut().add_move(record, self.game.fen());
+        }
+        
+        self.study = new_study;
+        self.state.mode = AppMode::Study;
+        tracing::info!("Game saved to new study");
     }
 }
 
@@ -497,7 +554,8 @@ impl eframe::App for ChessApp {
 
                 // Mode-specific panels
                 match self.state.mode {
-                    AppMode::Analysis => {
+                    AppMode::Analysis | AppMode::Study => {
+                        // Combined Analysis + Study mode
                         ui.horizontal(|ui| {
                             if ui.button(if self.engine_analyzing { "⏹ Stop" } else { "▶ Analyze" })
                                 .clicked() {
@@ -507,15 +565,29 @@ impl eframe::App for ChessApp {
                         ui.separator();
                         
                         // Show analysis panel and handle clicked moves
-                        let clicked_move = self.analysis_panel.show(ui);
+                        let clicked_moves = self.analysis_panel.show(ui);
                         
-                        // If user clicked a move from engine line, apply it as a fork
-                        if let Some(uci_move) = clicked_move {
-                            self.apply_engine_move(&uci_move);
+                        // If user clicked moves from engine line, apply them as a fork
+                        // Each clicked move includes (uci, depth_in_pv)
+                        if !clicked_moves.is_empty() {
+                            // Sort by index to play moves in order
+                            let mut moves_to_play: Vec<_> = clicked_moves;
+                            moves_to_play.sort_by_key(|(_, idx)| *idx);
+                            
+                            // Play each move up to and including the clicked one
+                            for (uci_move, _) in moves_to_play {
+                                if !self.apply_engine_move(&uci_move) {
+                                    break; // Stop if a move couldn't be applied
+                                }
+                            }
                         }
-                    }
-                    AppMode::Study => {
-                        self.study_panel.show(ui, &mut self.study);
+                        
+                        ui.separator();
+                        
+                        // Also show study panel
+                        if self.state.mode == AppMode::Study {
+                            self.study_panel.show(ui, &mut self.study);
+                        }
                     }
                     AppMode::Game => {
                         if let Some(action) = ControlPanel::show(
@@ -527,6 +599,18 @@ impl eframe::App for ChessApp {
                             self.engine_thinking,
                         ) {
                             self.handle_control_action(action);
+                        }
+                        
+                        // Add PGN export button for finished games
+                        if self.game.outcome() != GameOutcome::InProgress {
+                            ui.separator();
+                            if ui.button("📄 Export PGN").clicked() {
+                                let pgn = self.export_game_pgn();
+                                ui.ctx().copy_text(pgn);
+                            }
+                            if ui.button("📚 Save to Study").clicked() {
+                                self.save_game_to_study();
+                            }
                         }
                     }
                 }

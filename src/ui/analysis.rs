@@ -81,9 +81,10 @@ impl Default for AnalysisPanel {
 }
 
 impl AnalysisPanel {
-    /// Returns clicked move if user clicked on a PV move
-    pub fn show(&mut self, ui: &mut Ui) -> Option<String> {
-        let mut clicked_move: Option<String> = None;
+    /// Returns clicked moves if user clicked on PV moves
+    /// Returns Vec<(move_uci, line_index)> for all clicked moves
+    pub fn show(&mut self, ui: &mut Ui) -> Vec<(String, usize)> {
+        let mut clicked_moves: Vec<(String, usize)> = Vec::new();
         
         ui.vertical(|ui| {
             ui.heading("Analysis");
@@ -136,8 +137,8 @@ impl AnalysisPanel {
                 .collect();
                 
             for line in &lines_to_show {
-                if let Some(mv) = self.show_engine_line(ui, line) {
-                    clicked_move = Some(mv);
+                if let Some((mv, idx)) = self.show_engine_line(ui, line) {
+                    clicked_moves.push((mv, idx));
                 }
             }
 
@@ -146,7 +147,7 @@ impl AnalysisPanel {
             }
         });
         
-        clicked_move
+        clicked_moves
     }
 
     fn show_eval_bar(&self, ui: &mut Ui, line: &EngineLine) {
@@ -209,8 +210,9 @@ impl AnalysisPanel {
     }
 
     /// Shows an engine line, returns Some(move) if a move was clicked
-    fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) -> Option<String> {
-        let mut clicked_move = None;
+    /// Returns the move UCI and the index in the PV (for multi-move navigation)
+    fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) -> Option<(String, usize)> {
+        let mut clicked = None;
         
         ui.horizontal_wrapped(|ui| {
             // Line number and score
@@ -226,31 +228,25 @@ impl AnalysisPanel {
             };
             ui.colored_label(color, score_text);
             
-            // PV moves as clickable hyperlinks
+            // PV moves as clickable hyperlinks (ALL of them)
             if !line.pv.is_empty() {
                 for (i, mv) in line.pv.iter().enumerate() {
-                    let is_first = i == 0;
-                    if is_first {
-                        // First move is the main variation move
-                        let response = ui.add(egui::Label::new(
-                            egui::RichText::new(mv)
-                                .color(ui.visuals().hyperlink_color)
-                                .underline()
-                        ).sense(egui::Sense::click()));
-                        
-                        if response.clicked() {
-                            clicked_move = Some(mv.clone());
-                        }
-                    } else {
-                        // Subsequent moves are secondary
-                        ui.monospace(mv);
+                    // All moves are clickable
+                    let response = ui.add(egui::Label::new(
+                        egui::RichText::new(mv)
+                            .color(ui.visuals().hyperlink_color)
+                            .underline()
+                    ).sense(egui::Sense::click()));
+                    
+                    if response.clicked() {
+                        clicked = Some((mv.clone(), i));
                     }
                     ui.label(" ");
                 }
             }
         });
         
-        clicked_move
+        clicked
     }
 
     /// Update a line from engine output (always store up to 5)
