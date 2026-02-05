@@ -15,6 +15,11 @@ pub enum EngineCommand {
         moves: Vec<String>,
         movetime_ms: Option<u64>,
     },
+    /// Start infinite analysis
+    Analyze {
+        fen: String,
+        moves: Vec<String>,
+    },
     Stop,
     Quit,
 }
@@ -44,6 +49,7 @@ enum EngineState {
     Initializing,
     Idle,
     Thinking,
+    Analyzing,
     Terminated,
 }
 
@@ -82,8 +88,33 @@ impl EngineActor {
     }
 
     fn run(&mut self, stockfish_path: String) {
-        tracing::info!("EngineActor run loop started");
+        tracing::info!("EngineActor run loop started for: {}", stockfish_path);
         loop {
+            // If analyzing, check for commands without blocking
+            if self.state == EngineState::Analyzing {
+                match self.cmd_rx.try_recv() {
+                    Ok(cmd) => {
+                        if let Err(e) = self.handle_command(cmd, &stockfish_path) {
+                            tracing::error!("Command failed: {}", e);
+                        }
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // Continue reading engine output
+                        if let Err(e) = self.read_analysis_output() {
+                            tracing::error!("Analysis output error: {}", e);
+                            self.state = EngineState::Idle;
+                        }
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        tracing::info!("Command channel closed");
+                        break;
+                    }
+                }
+            }
+
+            // Normal blocking receive for non-analysis states
             let cmd = match self.cmd_rx.recv() {
                 Ok(cmd) => {
                     tracing::debug!("Received command: {:?}", cmd);
@@ -95,43 +126,54 @@ impl EngineActor {
                 }
             };
 
-            match cmd {
-                EngineCommand::Init => {
-                    if let Err(e) = self.init(&stockfish_path) {
-                        tracing::error!("Engine init failed: {}", e);
-                        let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
-                    }
-                }
-                EngineCommand::SetDifficulty(level) => {
-                    self.difficulty = level;
-                    if let Err(e) = self.apply_difficulty() {
-                        let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
-                    }
-                }
-                EngineCommand::NewGame => {
-                    if let Err(e) = self.new_game() {
-                        let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
-                    }
-                }
-                EngineCommand::Go { fen, moves, movetime_ms } => {
-                    if let Err(e) = self.go(&fen, &moves, movetime_ms) {
-                        let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
-                    }
-                }
-                EngineCommand::Stop => {
-                    if let Err(e) = self.stop() {
-                        let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
-                    }
-                }
-                EngineCommand::Quit => {
-                    let _ = self.quit();
-                    break;
-                }
+            if let Err(e) = self.handle_command(cmd, &stockfish_path) {
+                tracing::error!("Command failed: {}", e);
             }
         }
 
         self.state = EngineState::Terminated;
         let _ = self.event_tx.send(EngineEvent::Terminated);
+    }
+
+    fn handle_command(&mut self, cmd: EngineCommand, stockfish_path: &str) -> Result<()> {
+        match cmd {
+            EngineCommand::Init => {
+                if let Err(e) = self.init(stockfish_path) {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::SetDifficulty(level) => {
+                self.difficulty = level;
+                if let Err(e) = self.apply_difficulty() {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::NewGame => {
+                if let Err(e) = self.new_game() {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::Go { fen, moves, movetime_ms } => {
+                if let Err(e) = self.go(&fen, &moves, movetime_ms) {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::Analyze { fen, moves } => {
+                if let Err(e) = self.analyze(&fen, &moves) {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::Stop => {
+                if let Err(e) = self.stop() {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
+            EngineCommand::Quit => {
+                let _ = self.quit();
+                return Err(anyhow::anyhow!("Quit command received"));
+            }
+        }
+        Ok(())
     }
 
     fn init(&mut self, stockfish_path: &str) -> Result<()> {
@@ -229,14 +271,37 @@ impl EngineActor {
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<()> {
-        if self.state != EngineState::Thinking {
-            return Ok(());
+    fn analyze(&mut self, fen: &str, _moves: &[String]) -> Result<()> {
+        // Stop any ongoing analysis first
+        if self.state == EngineState::Analyzing {
+            self.send_command("stop")?;
+            // Drain any remaining output
+            self.drain_output()?;
         }
 
-        self.send_command("stop")?;
-        self.read_until_bestmove()?;
-        self.state = EngineState::Idle;
+        let position_cmd = format!("position fen {}", fen);
+        self.send_command(&position_cmd)?;
+
+        self.state = EngineState::Analyzing;
+        self.send_command("go infinite")?;
+
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        match self.state {
+            EngineState::Thinking => {
+                self.send_command("stop")?;
+                self.read_until_bestmove()?;
+                self.state = EngineState::Idle;
+            }
+            EngineState::Analyzing => {
+                self.send_command("stop")?;
+                self.drain_output()?;
+                self.state = EngineState::Idle;
+            }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -312,6 +377,52 @@ impl EngineActor {
                 return Ok(());
             }
         }
+    }
+
+    fn read_analysis_output(&mut self) -> Result<()> {
+        let stdout = self.stdout.as_mut().context("No stdout available")?;
+        let mut line = String::new();
+
+        // Non-blocking read attempt - use a small timeout by reading what's available
+        // Since BufReader doesn't have non-blocking, we check if there's data
+        line.clear();
+        let n = stdout.read_line(&mut line)?;
+        
+        if n == 0 {
+            return Ok(()); // No data available
+        }
+
+        let trimmed = line.trim();
+        if trimmed.starts_with("info ") {
+            if let Some(event) = Self::parse_info_line(trimmed) {
+                let _ = self.event_tx.send(event);
+            }
+        } else if trimmed.starts_with("bestmove ") {
+            // Analysis was stopped
+            self.state = EngineState::Idle;
+        }
+
+        Ok(())
+    }
+
+    fn drain_output(&mut self) -> Result<()> {
+        let stdout = self.stdout.as_mut().context("No stdout available")?;
+        let mut line = String::new();
+
+        // Read until we get bestmove or no more data
+        for _ in 0..100 { // Safety limit
+            line.clear();
+            match stdout.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if line.trim().starts_with("bestmove ") {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        Ok(())
     }
 
     fn parse_info_line(line: &str) -> Option<EngineEvent> {

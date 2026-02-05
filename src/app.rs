@@ -1,9 +1,21 @@
 use crate::engine::{DifficultyLevel, EngineActor, EngineCommand, EngineEvent};
 use crate::game::{GameOutcome, GameState, PlayerColor};
-use crate::ui::{ChessBoard, ControlPanel, ControlAction, MoveList, PieceRenderer, Theme};
+use crate::ui::{ChessBoard, ControlPanel, ControlAction, MoveList, PieceRenderer, Theme, AnalysisPanel};
 use shakmaty::{Move, Square};
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppMode {
+    Game,
+    Analysis,
+}
+
+impl Default for AppMode {
+    fn default() -> Self {
+        AppMode::Game
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -12,6 +24,7 @@ pub struct AppState {
     theme: Theme,
     player_color: PlayerColor,
     flipped: bool,
+    mode: AppMode,
 }
 
 impl Default for AppState {
@@ -21,6 +34,7 @@ impl Default for AppState {
             theme: Theme::Classic,
             player_color: PlayerColor::White,
             flipped: false,
+            mode: AppMode::Game,
         }
     }
 }
@@ -39,6 +53,10 @@ pub struct ChessApp {
     engine_event_rx: mpsc::Receiver<EngineEvent>,
     engine_ready: bool,
     engine_thinking: bool,
+    engine_analyzing: bool,
+
+    // Analysis
+    analysis_panel: AnalysisPanel,
 }
 
 impl ChessApp {
@@ -51,15 +69,19 @@ impl ChessApp {
 
         // Spawn engine actor - try common stockfish locations
         let stockfish_path = [
+            "./stockfish",
             "/Users/rj/Desktop/stockfish/stockfish-macos-m1-apple-silicon",
-            "/Users/rj/bin/stockfish",
+            "~/bin/stockfish",
             "/usr/local/bin/stockfish",
             "/opt/homebrew/bin/stockfish",
             "stockfish",
         ]
         .iter()
-        .find(|p| std::path::Path::new(p).exists())
-        .map(|s| s.to_string());
+        .find(|p| {
+            let expanded = shellexpand::tilde(p);
+            std::path::Path::new(expanded.as_ref()).exists()
+        })
+        .map(|s| shellexpand::tilde(s).to_string());
 
         let (engine_cmd_tx, engine_event_rx) = EngineActor::spawn(stockfish_path);
 
@@ -69,7 +91,7 @@ impl ChessApp {
             let _ = cmd_tx.send(EngineCommand::Init);
         });
 
-        Self {
+        let mut app = Self {
             game: GameState::new(),
             state,
             piece_renderer: PieceRenderer::new(),
@@ -79,7 +101,13 @@ impl ChessApp {
             engine_event_rx,
             engine_ready: false,
             engine_thinking: false,
-        }
+            engine_analyzing: false,
+            analysis_panel: AnalysisPanel::default(),
+        };
+
+        // Clear selection when initializing
+        app.clear_selection();
+        app
     }
 
     fn clear_selection(&mut self) {
@@ -88,21 +116,14 @@ impl ChessApp {
     }
 
     fn select_square(&mut self, square: Square) {
-        tracing::debug!("select_square called: {:?}", square);
-        // Check if there's a piece of the player's color on this square
+        // Check if there's a piece of the current turn's color on this square
         if let Some((role, color)) = self.game.piece_at(square) {
             let turn_color: shakmaty::Color = self.game.turn().into();
-            tracing::debug!("  Piece at square: {:?} {:?}, turn={:?}", color, role, turn_color);
             if color == turn_color {
                 self.selected_square = Some(square);
                 self.legal_moves_for_selected = self.game.legal_moves_for_square(square);
-                tracing::info!("  Selected square {:?} with {} legal moves", square, self.legal_moves_for_selected.len());
                 return;
-            } else {
-                tracing::debug!("  Wrong color piece, not selecting");
             }
-        } else {
-            tracing::debug!("  No piece at square, clearing selection");
         }
         self.clear_selection();
     }
@@ -110,11 +131,22 @@ impl ChessApp {
     fn make_move(&mut self, m: Move) {
         if let Ok(_record) = self.game.make_move(m) {
             self.clear_selection();
-            self.check_engine_turn();
+            
+            // In analysis mode, restart analysis on new position
+            if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+                self.start_analysis();
+            } else if self.state.mode == AppMode::Game {
+                self.check_engine_turn();
+            }
         }
     }
 
     fn check_engine_turn(&mut self) {
+        // Only in game mode
+        if self.state.mode != AppMode::Game {
+            return;
+        }
+
         // If game is over, don't start engine
         if self.game.outcome() != GameOutcome::InProgress {
             return;
@@ -135,7 +167,7 @@ impl ChessApp {
         self.engine_thinking = true;
 
         let fen = self.game.fen();
-        let moves: Vec<String> = Vec::new(); // We send position as FEN, not startpos + moves
+        let moves: Vec<String> = Vec::new();
 
         let cmd_tx = self.engine_cmd_tx.clone();
         std::thread::spawn(move || {
@@ -146,6 +178,44 @@ impl ChessApp {
                     movetime_ms: Some(1000), // 1 second per move
                 });
         });
+    }
+
+    fn start_analysis(&mut self) {
+        if !self.engine_ready || self.engine_analyzing {
+            return;
+        }
+
+        self.engine_analyzing = true;
+        self.analysis_panel.is_analyzing = true;
+
+        let fen = self.game.fen();
+        let moves: Vec<String> = Vec::new();
+
+        let cmd_tx = self.engine_cmd_tx.clone();
+        std::thread::spawn(move || {
+            let _ = cmd_tx
+                .send(EngineCommand::Analyze { fen, moves });
+        });
+    }
+
+    fn stop_analysis(&mut self) {
+        if self.engine_analyzing {
+            self.engine_analyzing = false;
+            self.analysis_panel.is_analyzing = false;
+            
+            let cmd_tx = self.engine_cmd_tx.clone();
+            std::thread::spawn(move || {
+                let _ = cmd_tx.send(EngineCommand::Stop);
+            });
+        }
+    }
+
+    fn toggle_analysis(&mut self) {
+        if self.engine_analyzing {
+            self.stop_analysis();
+        } else {
+            self.start_analysis();
+        }
     }
 
     fn process_engine_events(&mut self, ctx: &egui::Context) {
@@ -163,8 +233,10 @@ impl ChessApp {
                         let _ = cmd_tx.send(EngineCommand::SetDifficulty(difficulty));
                     });
 
-                    // Check if engine should move first
-                    self.check_engine_turn();
+                    // Check if engine should move first (in game mode)
+                    if self.state.mode == AppMode::Game {
+                        self.check_engine_turn();
+                    }
                 }
                 EngineEvent::BestMove { best_move, .. } => {
                     tracing::info!("Engine best move: {}", best_move);
@@ -177,25 +249,29 @@ impl ChessApp {
 
                     ctx.request_repaint();
                 }
-                EngineEvent::Info { depth, score_cp, .. } => {
-                    if let (Some(d), Some(s)) = (depth, score_cp) {
-                        tracing::debug!("Engine: depth={}, score={}", d, s);
-                    }
+                EngineEvent::Info { depth, score_cp, score_mate, pv, nodes, .. } => {
+                    // Update analysis panel
+                    self.analysis_panel.update_evaluation(score_cp, score_mate, depth, pv, nodes);
                 }
                 EngineEvent::Error(e) => {
                     tracing::error!("Engine error: {}", e);
                     self.engine_thinking = false;
+                    self.engine_analyzing = false;
+                    self.analysis_panel.is_analyzing = false;
                 }
                 EngineEvent::Terminated => {
                     tracing::warn!("Engine terminated");
                     self.engine_ready = false;
                     self.engine_thinking = false;
+                    self.engine_analyzing = false;
+                    self.analysis_panel.is_analyzing = false;
                 }
             }
         }
     }
 
     fn new_game(&mut self) {
+        self.stop_analysis();
         self.game.reset();
         self.clear_selection();
         self.engine_thinking = false;
@@ -207,8 +283,13 @@ impl ChessApp {
         });
 
         // Check if engine should move first (player is black)
-        if self.state.player_color == PlayerColor::Black {
+        if self.state.mode == AppMode::Game && self.state.player_color == PlayerColor::Black {
             self.check_engine_turn();
+        }
+
+        // Restart analysis if in analysis mode
+        if self.state.mode == AppMode::Analysis && self.analysis_panel.is_analyzing {
+            self.start_analysis();
         }
     }
 
@@ -238,6 +319,65 @@ impl ChessApp {
             }
         }
     }
+
+    fn go_to_previous_position(&mut self) {
+        if self.game.can_go_back() {
+            self.clear_selection();
+            let _ = self.game.go_back();
+            
+            // Restart analysis on new position
+            if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+                self.start_analysis();
+            }
+        }
+    }
+
+    fn go_to_next_position(&mut self) {
+        if self.game.can_go_forward() {
+            self.clear_selection();
+            let _ = self.game.go_forward();
+            
+            // Restart analysis on new position
+            if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+                self.start_analysis();
+            }
+        }
+    }
+
+    fn go_to_start(&mut self) {
+        self.clear_selection();
+        self.game.go_to_start();
+        
+        if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+            self.start_analysis();
+        }
+    }
+
+    fn go_to_end(&mut self) {
+        self.clear_selection();
+        self.game.go_to_end();
+        
+        if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+            self.start_analysis();
+        }
+    }
+
+    fn set_mode(&mut self, mode: AppMode) {
+        if self.state.mode != mode {
+            self.state.mode = mode;
+            
+            // Stop any ongoing analysis/game activities
+            self.stop_analysis();
+            
+            if mode == AppMode::Game {
+                // Start fresh game
+                self.new_game();
+            } else {
+                // In analysis mode, we keep the current position
+                // Optionally start analysis immediately
+            }
+        }
+    }
 }
 
 impl eframe::App for ChessApp {
@@ -245,15 +385,68 @@ impl eframe::App for ChessApp {
         // Process engine events
         self.process_engine_events(ctx);
 
-        // Request repaint while engine is thinking (for spinner)
-        if self.engine_thinking {
-            ctx.request_repaint();
+        // Request repaint while engine is analyzing (for live updates)
+        if self.engine_analyzing {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        // Side panel for controls
+        // Side panel for controls and analysis
         egui::SidePanel::left("controls")
-            .default_width(200.0)
+            .default_width(220.0)
             .show(ctx, |ui| {
+                // Mode selector
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    if ui.selectable_label(self.state.mode == AppMode::Game, "🎮 Game").clicked() {
+                        self.set_mode(AppMode::Game);
+                    }
+                    if ui.selectable_label(self.state.mode == AppMode::Analysis, "📊 Analysis").clicked() {
+                        self.set_mode(AppMode::Analysis);
+                    }
+                });
+                ui.separator();
+
+                // Navigation controls (mainly for analysis mode, but also useful in game)
+                if self.state.mode == AppMode::Analysis || self.game.can_go_back() || self.game.can_go_forward() {
+                    ui.label("Navigation:");
+                    ui.horizontal(|ui| {
+                        if ui.button("⏮ Start").clicked() {
+                            self.go_to_start();
+                        }
+                        if ui.button("◀ Prev").clicked() {
+                            self.go_to_previous_position();
+                        }
+                        if ui.button("▶ Next").clicked() {
+                            self.go_to_next_position();
+                        }
+                        if ui.button("⏭ End").clicked() {
+                            self.go_to_end();
+                        }
+                    });
+                    
+                    // Position indicator
+                    ui.label(format!("Position: {} / {}", 
+                        self.game.current_index(), 
+                        self.game.position_count() - 1
+                    ));
+                    ui.separator();
+                }
+
+                // Analysis panel (only in analysis mode)
+                if self.state.mode == AppMode::Analysis {
+                    ui.horizontal(|ui| {
+                        if ui.button(if self.engine_analyzing { "⏹ Stop" } else { "▶ Analyze" })
+                            .clicked() {
+                            self.toggle_analysis();
+                        }
+                    });
+                    ui.separator();
+                    
+                    self.analysis_panel.show(ui);
+                    ui.separator();
+                }
+
+                // Standard controls
                 if let Some(action) = ControlPanel::show(
                     ui,
                     &mut self.state.difficulty,
@@ -288,28 +481,28 @@ impl eframe::App for ChessApp {
                 &self.legal_moves_for_selected,
             );
 
-            // Determine if player can make moves
-            let game_turn = self.game.turn();
-            let player_color = self.state.player_color;
-            let can_move = self.game.outcome() == GameOutcome::InProgress
-                && !self.engine_thinking
-                && game_turn == player_color;
-            tracing::debug!("can_move: {}, game_turn: {:?}, player_color: {:?}, thinking: {}", 
-                can_move, game_turn, player_color, self.engine_thinking);
+            // Handle board interaction
+            // In game mode, only allow moves when it's player's turn
+            // In analysis mode, allow exploring moves but they create a new variation
+            let can_interact = match self.state.mode {
+                AppMode::Game => {
+                    self.game.outcome() == GameOutcome::InProgress
+                        && !self.engine_thinking
+                        && self.game.turn() == self.state.player_color
+                }
+                AppMode::Analysis => {
+                    // In analysis, always allow moves, but they'll truncate future if not at end
+                    self.game.outcome() == GameOutcome::InProgress
+                }
+            };
 
-            // Always allow selection (to see legal moves), but only allow actual moves when it's player's turn
             if let Some(square) = response.square_clicked {
-                tracing::info!("Square clicked: {:?}", square);
-                // Always select the square to show legal moves, regardless of whose turn it is
                 self.select_square(square);
             }
             
             if let Some(m) = response.move_made {
-                tracing::info!("Move attempted: {:?}", m);
-                if can_move {
+                if can_interact {
                     self.make_move(m);
-                } else {
-                    tracing::debug!("Cannot move: not player's turn or game over");
                 }
             }
         });
@@ -320,6 +513,9 @@ impl eframe::App for ChessApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Stop analysis before quitting
+        self.stop_analysis();
+        
         // Send quit command to engine
         let cmd_tx = self.engine_cmd_tx.clone();
         let _ = cmd_tx.send(EngineCommand::Quit);
