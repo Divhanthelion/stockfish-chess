@@ -65,6 +65,8 @@ pub struct AnalysisPanel {
     pub is_analyzing: bool,
     pub total_nodes: u64,
     pub current_depth: u32,
+    /// The FEN position where analysis started - all lines are relative to this
+    pub base_fen: Option<String>,
 }
 
 impl Default for AnalysisPanel {
@@ -76,16 +78,17 @@ impl Default for AnalysisPanel {
             is_analyzing: false,
             total_nodes: 0,
             current_depth: 0,
+            base_fen: None,
         }
     }
 }
 
 impl AnalysisPanel {
     /// Returns clicked moves if user clicked on PV moves
-    /// Returns the full move sequence (path) when a move is clicked
-    /// Returns Vec<move_uci> - all moves from the start of PV up to and including clicked move
-    pub fn show(&mut self, ui: &mut Ui) -> Vec<String> {
-        let mut clicked_path: Vec<String> = Vec::new();
+    /// Returns (base_fen, move_path) - the FEN where analysis started, and the full move sequence to play
+    /// This allows the app to reset to the base position and apply moves from there
+    pub fn show(&mut self, ui: &mut Ui) -> Option<(String, Vec<String>)> {
+        let mut result: Option<(String, Vec<String>)> = None;
         
         ui.vertical(|ui| {
             ui.heading("Analysis");
@@ -139,7 +142,9 @@ impl AnalysisPanel {
                 
             for line in &lines_to_show {
                 if let Some(path) = self.show_engine_line(ui, line) {
-                    clicked_path = path;
+                    // Include base_fen so app can reset to correct position
+                    let base_fen = self.base_fen.clone().unwrap_or_default();
+                    result = Some((base_fen, path));
                 }
             }
 
@@ -148,7 +153,7 @@ impl AnalysisPanel {
             }
         });
         
-        clicked_path
+        result
     }
 
     fn show_eval_bar(&self, ui: &mut Ui, line: &EngineLine) {
@@ -232,12 +237,15 @@ impl AnalysisPanel {
             // PV moves as clickable hyperlinks (ALL of them)
             if !line.pv.is_empty() {
                 for (i, mv) in line.pv.iter().enumerate() {
-                    // All moves are clickable
-                    let response = ui.add(egui::Label::new(
-                        egui::RichText::new(mv)
-                            .color(ui.visuals().hyperlink_color)
-                            .underline()
-                    ).sense(egui::Sense::click()));
+                    // All moves are clickable - use Button for proper pointer cursor
+                    let text = egui::RichText::new(mv)
+                        .color(ui.visuals().hyperlink_color)
+                        .underline();
+                    
+                    let response = ui.add(egui::Button::new(text)
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .sense(egui::Sense::click()));
                     
                     if response.clicked() {
                         // Return all moves from start up to and including clicked move

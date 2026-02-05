@@ -201,6 +201,8 @@ impl ChessApp {
         self.engine_analyzing = true;
         self.analysis_panel.is_analyzing = true;
         self.analysis_panel.clear();
+        // Store the base position where analysis started - all engine lines are relative to this
+        self.analysis_panel.base_fen = Some(self.game.fen());
 
         let fen = self.game.fen();
         let moves: Vec<String> = Vec::new();
@@ -565,15 +567,20 @@ impl eframe::App for ChessApp {
                         ui.separator();
                         
                         // Show analysis panel and handle clicked moves
-                        let clicked_path = self.analysis_panel.show(ui);
-                        
-                        // If user clicked a move in an engine line, apply the full path
-                        // clicked_path contains all moves from start to clicked move
-                        if !clicked_path.is_empty() {
-                            tracing::info!("Playing engine path: {:?}", clicked_path);
+                        if let Some((base_fen, path)) = self.analysis_panel.show(ui) {
+                            // User clicked a move in an engine line
+                            // Reset to base position first (where analysis started), then apply path
+                            if !base_fen.is_empty() {
+                                if let Ok(new_game) = GameState::from_fen(&base_fen) {
+                                    self.game = new_game;
+                                    tracing::info!("Reset to base position for analysis line");
+                                }
+                            }
+                            
+                            tracing::info!("Playing engine path: {:?}", path);
                             
                             // Play each move in the path sequentially
-                            for uci_move in clicked_path {
+                            for uci_move in path {
                                 if !self.apply_engine_move(&uci_move) {
                                     break; // Stop if a move couldn't be applied
                                 }
