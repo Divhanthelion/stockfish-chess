@@ -50,6 +50,8 @@ pub enum GameOutcome {
     InsufficientMaterial,
     ThreefoldRepetition,
     FiftyMoveRule,
+    Resignation(PlayerColor), // Winner (the player who didn't resign)
+    DrawByAgreement,
     InProgress,
 }
 
@@ -75,6 +77,8 @@ pub struct GameState {
     move_history: Vec<MoveRecord>,
     /// Current position index we're viewing (may be less than positions.len() - 1)
     current_index: usize,
+    /// Game result (for resignations, draws by agreement)
+    game_result: Option<GameOutcome>,
 }
 
 impl Default for GameState {
@@ -91,6 +95,7 @@ impl GameState {
             positions: vec![PositionState { position, hash }],
             move_history: Vec::new(),
             current_index: 0,
+            game_result: None,
         }
     }
 
@@ -104,6 +109,7 @@ impl GameState {
             positions: vec![PositionState { position, hash }],
             move_history: Vec::new(),
             current_index: 0,
+            game_result: None,
         })
     }
 
@@ -138,6 +144,11 @@ impl GameState {
     }
 
     pub fn outcome(&self) -> GameOutcome {
+        // Check for resignation or draw by agreement first
+        if let Some(result) = self.game_result {
+            return result;
+        }
+        
         let pos = self.current_position();
         
         if pos.is_checkmate() {
@@ -330,6 +341,35 @@ impl GameState {
         Square::ALL.iter().filter_map(|&sq| {
             self.piece_at(sq).map(|(role, color)| (sq, role, color))
         })
+    }
+
+    /// Resign the game - opponent wins
+    pub fn resign(&mut self, color: PlayerColor) {
+        let winner = match color {
+            PlayerColor::White => PlayerColor::Black,
+            PlayerColor::Black => PlayerColor::White,
+        };
+        self.game_result = Some(GameOutcome::Resignation(winner));
+    }
+    
+    /// Agree to a draw
+    pub fn agree_to_draw(&mut self) {
+        self.game_result = Some(GameOutcome::DrawByAgreement);
+    }
+    
+    /// Undo the last move (removes it from history)
+    pub fn undo_last_move(&mut self) -> bool {
+        if self.move_history.is_empty() {
+            return false;
+        }
+        // Remove the last position and move
+        self.positions.pop();
+        self.move_history.pop();
+        // Adjust current index
+        self.current_index = self.positions.len() - 1;
+        // Clear any game result since we're undoing
+        self.game_result = None;
+        true
     }
 
     pub fn reset(&mut self) {

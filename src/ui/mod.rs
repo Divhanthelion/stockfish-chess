@@ -12,4 +12,4 @@ pub use controls::{ControlPanel, ControlAction};
 pub use move_list::MoveList;
 pub use theme::Theme;
 pub use analysis::AnalysisPanel;
-pub use study_panel::StudyPanel;
+pub use study_panel::{StudyPanel, StudyNavAction};

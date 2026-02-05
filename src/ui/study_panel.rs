@@ -1,6 +1,13 @@
 use crate::study::{Study, StudyManager};
 use egui::Ui;
 
+/// Navigation action from study panel
+#[derive(Debug, Clone)]
+pub enum StudyNavAction {
+    /// Navigate to a specific position by path of child indices
+    GoToPosition(Vec<usize>),
+}
+
 pub struct StudyPanel {
     study_manager: StudyManager,
     available_studies: Vec<(String, String)>, // (id, name)
@@ -29,7 +36,10 @@ impl Default for StudyPanel {
 }
 
 impl StudyPanel {
-    pub fn show(&mut self, ui: &mut Ui, study: &mut Study) {
+    /// Shows the study panel and returns any navigation action
+    pub fn show(&mut self, ui: &mut Ui, study: &mut Study) -> Option<StudyNavAction> {
+        let mut nav_action = None;
+        
         // Handle export PGN
         if self.export_pgn {
             let pgn = study.to_pgn();
@@ -107,7 +117,9 @@ impl StudyPanel {
 
         // Variations tree
         ui.label("Variations:");
-        self.show_variation_tree(ui, study);
+        if let Some(action) = self.show_variation_tree(ui, study) {
+            nav_action = Some(action);
+        }
 
         ui.separator();
 
@@ -181,26 +193,58 @@ impl StudyPanel {
                     }
                 });
         }
+        
+        nav_action
     }
 
-    fn show_variation_tree(&self, ui: &mut Ui, study: &Study) {
+    fn show_variation_tree(&self, ui: &mut Ui, study: &Study) -> Option<StudyNavAction> {
         let chapter = study.current_chapter();
+        let mut nav_action = None;
 
-        // Show path to current position
+        // Show path to current position as clickable moves
         ui.horizontal_wrapped(|ui| {
-            ui.label("Start");
+            // Start button - goes to root
+            let start_text = egui::RichText::new("Start")
+                .color(ui.visuals().hyperlink_color);
+            let start_btn = ui.add(egui::Button::new(start_text)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE)
+                .sense(egui::Sense::click()));
+            
+            if start_btn.clicked() {
+                nav_action = Some(StudyNavAction::GoToPosition(Vec::new()));
+            }
             
             let mut node = &chapter.root;
+            let mut current_path = Vec::new();
+            
             for (depth, &idx) in chapter.current_path.iter().enumerate() {
                 if idx < node.children.len() {
                     let child = &node.children[idx];
+                    current_path.push(idx);
+                    
                     if let Some(ref mv) = child.move_record {
                         // Highlight if this is on our current path
                         let is_current = depth == chapter.current_path.len() - 1;
-                        if is_current {
-                            ui.colored_label(ui.visuals().selection.stroke.color, &mv.san);
+                        
+                        let text = if is_current {
+                            egui::RichText::new(&mv.san)
+                                .color(ui.visuals().selection.stroke.color)
+                                .strong()
                         } else {
-                            ui.label(&mv.san);
+                            egui::RichText::new(&mv.san)
+                                .color(ui.visuals().hyperlink_color)
+                                .underline()
+                        };
+                        
+                        let btn = ui.add(egui::Button::new(text)
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .sense(egui::Sense::click()));
+                        
+                        if btn.clicked() {
+                            // Navigate to this position
+                            nav_action = Some(StudyNavAction::GoToPosition(current_path.clone()));
                         }
                     }
                     node = child;
@@ -208,7 +252,7 @@ impl StudyPanel {
             }
         });
 
-        // Show alternatives at current position
+        // Show alternatives at current position as clickable moves
         let current_node = chapter.current_node();
         if !current_node.children.is_empty() {
             ui.label("Alternatives:");
@@ -216,10 +260,28 @@ impl StudyPanel {
                 if let Some(ref mv) = child.move_record {
                     ui.horizontal(|ui| {
                         ui.label(format!("{}.", idx + 1));
-                        ui.label(&mv.san);
+                        
+                        // Make the move SAN a clickable hyperlink
+                        let text = egui::RichText::new(&mv.san)
+                            .color(ui.visuals().hyperlink_color)
+                            .underline();
+                        
+                        let btn = ui.add(egui::Button::new(text)
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .sense(egui::Sense::click()));
+                        
+                        if btn.clicked() {
+                            // Build path: current path + this child index
+                            let mut new_path = chapter.current_path.clone();
+                            new_path.push(idx);
+                            nav_action = Some(StudyNavAction::GoToPosition(new_path));
+                        }
                     });
                 }
             }
         }
+        
+        nav_action
     }
 }

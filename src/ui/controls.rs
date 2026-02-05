@@ -12,6 +12,9 @@ pub enum ControlAction {
     SetDifficulty(DifficultyLevel),
     SetTheme(Theme),
     SetPlayerColor(PlayerColor),
+    Resign,
+    OfferDraw,
+    Undo,
 }
 
 impl ControlPanel {
@@ -57,6 +60,16 @@ impl ControlPanel {
                 }
                 GameOutcome::FiftyMoveRule => {
                     ui.colored_label(egui::Color32::YELLOW, "Draw by fifty-move rule");
+                }
+                GameOutcome::Resignation(winner) => {
+                    let text = match winner {
+                        PlayerColor::White => "White wins by resignation!",
+                        PlayerColor::Black => "Black wins by resignation!",
+                    };
+                    ui.colored_label(egui::Color32::GREEN, text);
+                }
+                GameOutcome::DrawByAgreement => {
+                    ui.colored_label(egui::Color32::YELLOW, "Draw by agreement");
                 }
             }
 
@@ -115,6 +128,25 @@ impl ControlPanel {
                         }
                     }
                 });
+
+            // Game actions (only during active game)
+            if outcome == GameOutcome::InProgress {
+                ui.add_space(10.0);
+                ui.separator();
+                
+                ui.horizontal(|ui| {
+                    if ui.button("🏳 Resign").clicked() {
+                        action = Some(ControlAction::Resign);
+                    }
+                    if ui.button("🤝 Offer Draw").clicked() {
+                        action = Some(ControlAction::OfferDraw);
+                    }
+                });
+                
+                if ui.button("↩ Undo Move").clicked() {
+                    action = Some(ControlAction::Undo);
+                }
+            }
         });
 
         action

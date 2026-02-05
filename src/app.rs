@@ -1,7 +1,7 @@
 use crate::engine::{DifficultyLevel, EngineActor, EngineCommand, EngineEvent};
 use crate::game::{GameOutcome, GameState, PlayerColor, MoveRecord};
 use crate::study::{Study, StudyManager};
-use crate::ui::{ChessBoard, ControlPanel, ControlAction, MoveList, PieceRenderer, Theme, AnalysisPanel, StudyPanel};
+use crate::ui::{ChessBoard, ControlPanel, ControlAction, MoveList, PieceRenderer, Theme, AnalysisPanel, StudyPanel, StudyNavAction};
 use shakmaty::{Move, Square};
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc;
@@ -59,6 +59,10 @@ pub struct ChessApp {
 
     // Analysis
     analysis_panel: AnalysisPanel,
+    
+    // Draw offer checking
+    checking_draw_offer: bool,
+    draw_offer_score: Option<i32>,
 
     // Study
     study: Study,
@@ -109,6 +113,8 @@ impl ChessApp {
             engine_thinking: false,
             engine_analyzing: false,
             analysis_panel: AnalysisPanel::default(),
+            checking_draw_offer: false,
+            draw_offer_score: None,
             study: Study::new("Untitled Study".to_string()),
             study_panel: StudyPanel::default(),
         };
@@ -256,9 +262,24 @@ impl ChessApp {
                 EngineEvent::BestMove { best_move, .. } => {
                     tracing::info!("Engine best move: {}", best_move);
                     self.engine_thinking = false;
-
-                    if let Err(e) = self.game.make_move_uci(&best_move) {
-                        tracing::error!("Failed to apply engine move: {}", e);
+                    
+                    // Check if we're evaluating a draw offer
+                    if self.checking_draw_offer {
+                        self.checking_draw_offer = false;
+                        // Accept draw if white is ahead (positive score from white's perspective)
+                        let accept_draw = self.draw_offer_score.map_or(false, |score| score > 0);
+                        if accept_draw {
+                            self.game.agree_to_draw();
+                            tracing::info!("Draw accepted - white is ahead by {:?} cp", self.draw_offer_score);
+                        } else {
+                            tracing::info!("Draw declined - white is not ahead (score: {:?})", self.draw_offer_score);
+                        }
+                        self.draw_offer_score = None;
+                    } else {
+                        // Normal gameplay - apply engine move
+                        if let Err(e) = self.game.make_move_uci(&best_move) {
+                            tracing::error!("Failed to apply engine move: {}", e);
+                        }
                     }
 
                     ctx.request_repaint();
@@ -268,6 +289,16 @@ impl ChessApp {
                     self.analysis_panel.update_line(line_id, score_cp, score_mate, depth, pv);
                     if let Some(n) = nodes {
                         self.analysis_panel.total_nodes = n;
+                    }
+                    
+                    // Capture score for draw offer evaluation
+                    if self.checking_draw_offer {
+                        if let Some(mate) = score_mate {
+                            // Convert mate score to a large centipawn value
+                            self.draw_offer_score = Some(if mate > 0 { 10000 } else { -10000 });
+                        } else if let Some(cp) = score_cp {
+                            self.draw_offer_score = Some(cp);
+                        }
                     }
                 }
                 EngineEvent::Error(e) => {
@@ -329,6 +360,97 @@ impl ChessApp {
             ControlAction::SetPlayerColor(color) => {
                 self.state.player_color = color;
                 self.new_game();
+            }
+            ControlAction::Resign => {
+                self.game.resign(self.state.player_color);
+            }
+            ControlAction::OfferDraw => {
+                // Check position with engine - accept draw if white is ahead
+                self.check_draw_offer();
+            }
+            ControlAction::Undo => {
+                // Undo last two moves (player and engine)
+                self.undo_last_moves();
+            }
+        }
+    }
+    
+    fn check_draw_offer(&mut self) {
+        // Quick analysis: if white is ahead, accept draw
+        // We'll use a simple evaluation - start a brief analysis
+        if self.engine_ready && !self.engine_thinking && !self.engine_analyzing {
+            let fen = self.game.fen();
+            let cmd_tx = self.engine_cmd_tx.clone();
+            
+            // Request a quick evaluation
+            std::thread::spawn(move || {
+                let _ = cmd_tx.send(EngineCommand::Go {
+                    fen,
+                    moves: Vec::new(),
+                    movetime_ms: Some(500), // 500ms quick eval
+                });
+            });
+            
+            // Store that we're checking a draw offer
+            self.checking_draw_offer = true;
+            self.draw_offer_score = None;
+        }
+    }
+    
+    fn undo_last_moves(&mut self) {
+        // Undo the last two moves (player's move and engine's response)
+        // First, if engine is thinking, stop it
+        if self.engine_thinking {
+            let cmd_tx = self.engine_cmd_tx.clone();
+            std::thread::spawn(move || {
+                let _ = cmd_tx.send(EngineCommand::Stop);
+            });
+            self.engine_thinking = false;
+        }
+        
+        // Undo moves until it's the player's turn again
+        let target_turn = self.state.player_color;
+        let mut undone = 0;
+        
+        while self.game.turn() != target_turn && self.game.can_go_back() {
+            if self.game.go_back().is_ok() {
+                undone += 1;
+            } else {
+                break;
+            }
+        }
+        
+        // Also remove the moves from history if we're at the end
+        if !self.game.can_go_forward() && undone > 0 {
+            // Truncate history
+            for _ in 0..undone {
+                self.game.undo_last_move();
+            }
+        }
+        
+        self.clear_selection();
+        tracing::info!("Undid {} moves", undone);
+    }
+    
+    fn handle_study_nav_action(&mut self, action: StudyNavAction) {
+        match action {
+            StudyNavAction::GoToPosition(path) => {
+                // Navigate study chapter to the specified path
+                let chapter = self.study.current_chapter_mut();
+                chapter.current_path = path.clone();
+                
+                // Update the game to match the new position
+                let fen = chapter.current_fen().to_string();
+                if let Ok(new_game) = GameState::from_fen(&fen) {
+                    self.game = new_game;
+                    self.clear_selection();
+                    tracing::info!("Navigated to study position: {:?}", path);
+                }
+                
+                // Restart analysis if active
+                if self.state.mode == AppMode::Analysis && self.engine_analyzing {
+                    self.start_analysis();
+                }
             }
         }
     }
@@ -462,10 +584,11 @@ impl ChessApp {
         
         // Result
         let result = match self.game.outcome() {
-            GameOutcome::Checkmate(PlayerColor::White) => "1-0",
-            GameOutcome::Checkmate(PlayerColor::Black) => "0-1",
+            GameOutcome::Checkmate(PlayerColor::White) | GameOutcome::Resignation(PlayerColor::White) => "1-0",
+            GameOutcome::Checkmate(PlayerColor::Black) | GameOutcome::Resignation(PlayerColor::Black) => "0-1",
             GameOutcome::Stalemate | GameOutcome::InsufficientMaterial | 
-            GameOutcome::ThreefoldRepetition | GameOutcome::FiftyMoveRule => "1/2-1/2",
+            GameOutcome::ThreefoldRepetition | GameOutcome::FiftyMoveRule |
+            GameOutcome::DrawByAgreement => "1/2-1/2",
             GameOutcome::InProgress => "*",
         };
         pgn.push_str(&format!("[Result \"{}\"]\n", result));
@@ -591,7 +714,9 @@ impl eframe::App for ChessApp {
                         
                         // Also show study panel
                         if self.state.mode == AppMode::Study {
-                            self.study_panel.show(ui, &mut self.study);
+                            if let Some(nav_action) = self.study_panel.show(ui, &mut self.study) {
+                                self.handle_study_nav_action(nav_action);
+                            }
                         }
                     }
                     AppMode::Game => {
