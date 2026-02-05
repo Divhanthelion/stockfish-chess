@@ -2,6 +2,7 @@ use shakmaty::{
     fen::Fen, san::San, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move,
     Position, Role, Square,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -52,7 +53,7 @@ pub enum GameOutcome {
     InProgress,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveRecord {
     pub san: String,
     pub uci: String,
@@ -63,6 +64,7 @@ pub struct MoveRecord {
 #[derive(Debug, Clone)]
 struct PositionState {
     position: Chess,
+    #[allow(dead_code)]
     hash: u64,
 }
 

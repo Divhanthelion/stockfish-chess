@@ -1,6 +1,7 @@
 mod app;
 mod engine;
 mod game;
+mod study;
 mod ui;
 
 use anyhow::Result;

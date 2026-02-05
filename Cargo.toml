@@ -30,6 +30,9 @@ serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 shellexpand = "3"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+serde_json = "1"
 
 [dev-dependencies]
 egui_kittest = "0.33.3"

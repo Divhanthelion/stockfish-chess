@@ -1,27 +1,15 @@
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke, Ui, Vec2};
 
-#[derive(Debug, Clone)]
-pub struct Evaluation {
+#[derive(Debug, Clone, Default)]
+pub struct EngineLine {
+    pub id: u32, // 1-indexed
     pub score_cp: Option<i32>,
     pub score_mate: Option<i32>,
     pub depth: u32,
     pub pv: Vec<String>,
-    pub nodes: u64,
 }
 
-impl Default for Evaluation {
-    fn default() -> Self {
-        Self {
-            score_cp: None,
-            score_mate: None,
-            depth: 0,
-            pv: Vec::new(),
-            nodes: 0,
-        }
-    }
-}
-
-impl Evaluation {
+impl EngineLine {
     pub fn format_score(&self) -> String {
         if let Some(mate) = self.score_mate {
             if mate > 0 {
@@ -41,13 +29,17 @@ impl Evaluation {
         }
     }
 
-    pub fn is_white_better(&self) -> bool {
+    pub fn score_for_sorting(&self) -> f32 {
         if let Some(mate) = self.score_mate {
-            mate > 0
+            if mate > 0 {
+                1000.0 - mate as f32 // Winning mate
+            } else {
+                -1000.0 + mate.abs() as f32 // Losing mate
+            }
         } else if let Some(cp) = self.score_cp {
-            cp > 0
+            cp as f32 / 100.0
         } else {
-            false
+            0.0
         }
     }
 
@@ -60,7 +52,6 @@ impl Evaluation {
                 -1.0
             }
         } else if let Some(cp) = self.score_cp {
-            // Clamp between -10 and +10 pawns, then normalize
             let pawns = (cp as f32 / 100.0).clamp(-10.0, 10.0);
             pawns / 10.0
         } else {
@@ -70,26 +61,34 @@ impl Evaluation {
 }
 
 pub struct AnalysisPanel {
-    pub evaluation: Evaluation,
+    pub lines: Vec<EngineLine>,
     pub is_analyzing: bool,
+    pub num_lines: u32,
+    pub total_nodes: u64,
+    pub current_depth: u32,
 }
 
 impl Default for AnalysisPanel {
     fn default() -> Self {
         Self {
-            evaluation: Evaluation::default(),
+            lines: Vec::new(),
             is_analyzing: false,
+            num_lines: 3,
+            total_nodes: 0,
+            current_depth: 0,
         }
     }
 }
 
 impl AnalysisPanel {
-    pub fn show(&mut self, ui: &mut Ui) {
+    /// Returns true if number of lines changed and analysis should be restarted
+    pub fn show(&mut self, ui: &mut Ui) -> bool {
+        let mut lines_changed = false;
         ui.vertical(|ui| {
             ui.heading("Analysis");
             ui.separator();
 
-            // Status indicator
+            // Status and controls
             ui.horizontal(|ui| {
                 if self.is_analyzing {
                     ui.spinner();
@@ -97,58 +96,63 @@ impl AnalysisPanel {
                 } else {
                     ui.label("⏸ Paused");
                 }
-            });
-
-            ui.add_space(8.0);
-
-            // Evaluation bar
-            self.show_eval_bar(ui);
-
-            ui.add_space(8.0);
-
-            // Score display
-            ui.horizontal(|ui| {
-                ui.label("Score:");
-                let score_text = self.evaluation.format_score();
-                let color = if self.evaluation.is_white_better() {
-                    Color32::GREEN
-                } else if self.evaluation.score_cp.unwrap_or(0) < 0 || self.evaluation.score_mate.unwrap_or(1) < 0 {
-                    Color32::RED
-                } else {
-                    ui.visuals().text_color()
-                };
-                ui.colored_label(color, score_text);
-            });
-
-            // Depth and nodes
-            ui.horizontal(|ui| {
-                ui.label(format!("Depth: {}", self.evaluation.depth));
+                
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("Nodes: {}", format_nodes(self.evaluation.nodes)));
+                    ui.label(format!("d{}", self.current_depth));
                 });
+            });
+
+            ui.add_space(8.0);
+
+            // Evaluation bar (from best line)
+            if let Some(best) = self.lines.first() {
+                self.show_eval_bar(ui, best);
+            }
+
+            ui.add_space(8.0);
+
+            // Number of lines selector
+            ui.horizontal(|ui| {
+                ui.label("Lines:");
+                for n in 1..=5 {
+                    let was_selected = self.num_lines == n;
+                    if ui.selectable_label(was_selected, n.to_string()).clicked() && !was_selected {
+                        self.num_lines = n;
+                        lines_changed = true;
+                    }
+                }
             });
 
             ui.add_space(8.0);
             ui.separator();
 
-            // Principal variation (best line)
-            ui.label("Best line:");
-            if !self.evaluation.pv.is_empty() {
-                let pv_text = self.evaluation.pv.join(" ");
-                ui.add(egui::Label::new(pv_text).wrap());
-            } else {
-                ui.label("--");
+            // Engine lines
+            for line in &self.lines {
+                self.show_engine_line(ui, line);
+            }
+
+            if self.lines.is_empty() {
+                ui.label("No analysis yet...");
             }
         });
+        lines_changed
     }
 
-    fn show_eval_bar(&self, ui: &mut Ui) {
+    fn show_eval_bar(&self, ui: &mut Ui, line: &EngineLine) {
         let available_width = ui.available_width();
+        if available_width < 20.0 {
+            return; // Too narrow to render
+        }
         let bar_height = 24.0;
         let (rect, _response) = ui.allocate_exact_size(
             Vec2::new(available_width, bar_height),
             egui::Sense::hover(),
         );
+
+        // Ensure rect has valid dimensions
+        if rect.width() < 1.0 || rect.height() < 1.0 {
+            return;
+        }
 
         let painter = ui.painter();
 
@@ -156,7 +160,7 @@ impl AnalysisPanel {
         painter.rect_filled(rect, CornerRadius::same(4), Color32::BLACK);
 
         // White portion
-        let score = self.evaluation.normalized_score();
+        let score = line.normalized_score();
         let white_width = (rect.width() * (0.5 + score * 0.5)).clamp(0.0, rect.width());
         
         if white_width > 0.0 {
@@ -179,32 +183,85 @@ impl AnalysisPanel {
 
         // Border
         painter.rect_stroke(rect, CornerRadius::same(4), Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Middle);
+
+        // Score text centered (only if bar is wide enough)
+        if rect.width() > 50.0 && rect.height() > 10.0 {
+            let score_text = line.format_score();
+            let text_color = Color32::WHITE;
+            let _ = painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                score_text,
+                egui::FontId::proportional(12.0),
+                text_color,
+            );
+        }
     }
 
-    pub fn update_evaluation(&mut self, score_cp: Option<i32>, score_mate: Option<i32>, depth: Option<u32>, pv: Vec<String>, nodes: Option<u64>) {
+    fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) {
+        ui.horizontal(|ui| {
+            // Line number
+            ui.label(format!("{}.", line.id));
+            
+            // Score
+            let score_text = line.format_score();
+            let color = if line.score_cp.unwrap_or(0) > 0 || line.score_mate.unwrap_or(0) > 0 {
+                Color32::GREEN
+            } else if line.score_cp.unwrap_or(0) < 0 || line.score_mate.unwrap_or(0) < 0 {
+                Color32::RED
+            } else {
+                ui.visuals().text_color()
+            };
+            ui.colored_label(color, score_text);
+            
+            // PV (best line)
+            if !line.pv.is_empty() {
+                let pv_text = line.pv.join(" ");
+                ui.monospace(pv_text);
+            }
+        });
+    }
+
+    pub fn update_line(&mut self, multipv: u32, score_cp: Option<i32>, score_mate: Option<i32>, depth: Option<u32>, pv: Vec<String>) {
+        let id = multipv.max(1);
+        
+        // Update current depth
         if let Some(d) = depth {
-            self.evaluation.depth = d;
+            self.current_depth = self.current_depth.max(d);
         }
-        if let Some(cp) = score_cp {
-            self.evaluation.score_cp = Some(cp);
-            self.evaluation.score_mate = None;
-        }
-        if let Some(mate) = score_mate {
-            self.evaluation.score_mate = Some(mate);
-        }
-        self.evaluation.pv = pv;
-        if let Some(n) = nodes {
-            self.evaluation.nodes = n;
+        
+        // Find or create line
+        if let Some(line) = self.lines.iter_mut().find(|l| l.id == id) {
+            line.score_cp = score_cp;
+            line.score_mate = score_mate;
+            if let Some(d) = depth {
+                line.depth = d;
+            }
+            if !pv.is_empty() {
+                line.pv = pv;
+            }
+        } else {
+            self.lines.push(EngineLine {
+                id,
+                score_cp,
+                score_mate,
+                depth: depth.unwrap_or(0),
+                pv,
+            });
+            // Sort by score
+            self.lines.sort_by(|a, b| {
+                b.score_for_sorting().partial_cmp(&a.score_for_sorting()).unwrap()
+            });
         }
     }
-}
 
-fn format_nodes(nodes: u64) -> String {
-    if nodes >= 1_000_000 {
-        format!("{:.1}M", nodes as f64 / 1_000_000.0)
-    } else if nodes >= 1_000 {
-        format!("{:.1}K", nodes as f64 / 1_000.0)
-    } else {
-        nodes.to_string()
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.current_depth = 0;
+        self.total_nodes = 0;
+    }
+
+    pub fn get_num_lines(&self) -> u32 {
+        self.num_lines
     }
 }

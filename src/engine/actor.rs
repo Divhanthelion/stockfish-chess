@@ -9,6 +9,7 @@ use std::thread;
 pub enum EngineCommand {
     Init,
     SetDifficulty(DifficultyLevel),
+    SetMultiPV(u32),
     NewGame,
     Go {
         fen: String,
@@ -38,6 +39,7 @@ pub enum EngineEvent {
         pv: Vec<String>,
         nodes: Option<u64>,
         time_ms: Option<u64>,
+        multipv: Option<u32>, // 1-indexed line number
     },
     Error(String),
     Terminated,
@@ -148,6 +150,11 @@ impl EngineActor {
                     let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
                 }
             }
+            EngineCommand::SetMultiPV(lines) => {
+                if let Err(e) = self.set_multipv(lines) {
+                    let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
+                }
+            }
             EngineCommand::NewGame => {
                 if let Err(e) = self.new_game() {
                     let _ = self.event_tx.send(EngineEvent::Error(e.to_string()));
@@ -239,6 +246,19 @@ impl EngineActor {
             self.send_command(&cmd)?;
         }
 
+        self.send_command("isready")?;
+        self.wait_for_response("readyok")?;
+
+        Ok(())
+    }
+
+    fn set_multipv(&mut self, lines: u32) -> Result<()> {
+        if self.stdin.is_none() {
+            return Ok(());
+        }
+
+        let lines = lines.clamp(1, 5);
+        self.send_command(&format!("setoption name MultiPV value {}", lines))?;
         self.send_command("isready")?;
         self.wait_for_response("readyok")?;
 
@@ -434,6 +454,7 @@ impl EngineActor {
         let mut pv = Vec::new();
         let mut nodes = None;
         let mut time_ms = None;
+        let mut multipv = None;
 
         let mut i = 1;
         while i < parts.len() {
@@ -441,6 +462,14 @@ impl EngineActor {
                 "depth" => {
                     if i + 1 < parts.len() {
                         depth = parts[i + 1].parse().ok();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "multipv" => {
+                    if i + 1 < parts.len() {
+                        multipv = parts[i + 1].parse().ok();
                         i += 2;
                     } else {
                         i += 1;
@@ -495,6 +524,7 @@ impl EngineActor {
                 pv,
                 nodes,
                 time_ms,
+                multipv,
             })
         } else {
             None
