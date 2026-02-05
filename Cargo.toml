@@ -1,0 +1,39 @@
+[package]
+name = "stockfish-chess"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+description = "A beautiful chess game with Stockfish AI integration"
+license = "MIT"
+
+[dependencies]
+# GUI
+egui = "0.33.3"
+eframe = { version = "0.33.3", features = ["persistence", "glow"] }
+egui_extras = { version = "0.33.3", features = ["all_loaders"] }
+
+# Chess Logic
+shakmaty = "0.30"
+
+# Async runtime for UI
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# SVG Rendering
+resvg = "0.44"
+tiny-skia = "0.11"
+usvg = "0.44"
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+egui_kittest = "0.33.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
