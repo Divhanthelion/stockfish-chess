@@ -565,17 +565,15 @@ impl eframe::App for ChessApp {
                         ui.separator();
                         
                         // Show analysis panel and handle clicked moves
-                        let clicked_moves = self.analysis_panel.show(ui);
+                        let clicked_path = self.analysis_panel.show(ui);
                         
-                        // If user clicked moves from engine line, apply them as a fork
-                        // Each clicked move includes (uci, depth_in_pv)
-                        if !clicked_moves.is_empty() {
-                            // Sort by index to play moves in order
-                            let mut moves_to_play: Vec<_> = clicked_moves;
-                            moves_to_play.sort_by_key(|(_, idx)| *idx);
+                        // If user clicked a move in an engine line, apply the full path
+                        // clicked_path contains all moves from start to clicked move
+                        if !clicked_path.is_empty() {
+                            tracing::info!("Playing engine path: {:?}", clicked_path);
                             
-                            // Play each move up to and including the clicked one
-                            for (uci_move, _) in moves_to_play {
+                            // Play each move in the path sequentially
+                            for uci_move in clicked_path {
                                 if !self.apply_engine_move(&uci_move) {
                                     break; // Stop if a move couldn't be applied
                                 }

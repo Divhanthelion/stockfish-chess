@@ -82,9 +82,10 @@ impl Default for AnalysisPanel {
 
 impl AnalysisPanel {
     /// Returns clicked moves if user clicked on PV moves
-    /// Returns Vec<(move_uci, line_index)> for all clicked moves
-    pub fn show(&mut self, ui: &mut Ui) -> Vec<(String, usize)> {
-        let mut clicked_moves: Vec<(String, usize)> = Vec::new();
+    /// Returns the full move sequence (path) when a move is clicked
+    /// Returns Vec<move_uci> - all moves from the start of PV up to and including clicked move
+    pub fn show(&mut self, ui: &mut Ui) -> Vec<String> {
+        let mut clicked_path: Vec<String> = Vec::new();
         
         ui.vertical(|ui| {
             ui.heading("Analysis");
@@ -137,8 +138,8 @@ impl AnalysisPanel {
                 .collect();
                 
             for line in &lines_to_show {
-                if let Some((mv, idx)) = self.show_engine_line(ui, line) {
-                    clicked_moves.push((mv, idx));
+                if let Some(path) = self.show_engine_line(ui, line) {
+                    clicked_path = path;
                 }
             }
 
@@ -147,7 +148,7 @@ impl AnalysisPanel {
             }
         });
         
-        clicked_moves
+        clicked_path
     }
 
     fn show_eval_bar(&self, ui: &mut Ui, line: &EngineLine) {
@@ -209,10 +210,10 @@ impl AnalysisPanel {
         }
     }
 
-    /// Shows an engine line, returns Some(move) if a move was clicked
-    /// Returns the move UCI and the index in the PV (for multi-move navigation)
-    fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) -> Option<(String, usize)> {
-        let mut clicked = None;
+    /// Shows an engine line
+    /// Returns Vec<move_uci> - the full path up to and including the clicked move
+    fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) -> Option<Vec<String>> {
+        let mut clicked_path: Option<Vec<String>> = None;
         
         ui.horizontal_wrapped(|ui| {
             // Line number and score
@@ -239,14 +240,15 @@ impl AnalysisPanel {
                     ).sense(egui::Sense::click()));
                     
                     if response.clicked() {
-                        clicked = Some((mv.clone(), i));
+                        // Return all moves from start up to and including clicked move
+                        clicked_path = Some(line.pv[..=i].to_vec());
                     }
                     ui.label(" ");
                 }
             }
         });
         
-        clicked
+        clicked_path
     }
 
     /// Update a line from engine output (always store up to 5)
