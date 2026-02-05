@@ -204,11 +204,12 @@ impl ChessApp {
 
         let fen = self.game.fen();
         let moves: Vec<String> = Vec::new();
-        let num_lines = self.analysis_panel.get_num_lines();
+        // Always calculate max (5) lines, just display fewer
+        let max_lines = 5;
 
         let cmd_tx = self.engine_cmd_tx.clone();
         std::thread::spawn(move || {
-            let _ = cmd_tx.send(EngineCommand::SetMultiPV(num_lines));
+            let _ = cmd_tx.send(EngineCommand::SetMultiPV(max_lines));
             let _ = cmd_tx.send(EngineCommand::Analyze { fen, moves });
         });
     }
@@ -413,6 +414,33 @@ impl ChessApp {
             }
         }
     }
+
+    /// Apply a move clicked from engine analysis (creates a fork/variation)
+    fn apply_engine_move(&mut self, uci_move: &str) {
+        use shakmaty::uci::UciMove;
+        
+        // Parse the UCI move
+        if let Ok(uci) = uci_move.parse::<UciMove>() {
+            // Convert to Move
+            if let Ok(m) = uci.to_move(self.game.current_position()) {
+                // Check if move is legal
+                if self.game.legal_moves().contains(&m) {
+                    // Apply the move
+                    if let Some(record) = self.make_move(m) {
+                        // In Analysis mode, this creates a variation/fork
+                        // The analysis will automatically restart at the new position
+                        tracing::info!("Applied engine move: {} (fork)", record.san);
+                        
+                        // Restart analysis at new position
+                        if self.engine_analyzing {
+                            self.stop_analysis();
+                            self.start_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for ChessApp {
@@ -478,10 +506,12 @@ impl eframe::App for ChessApp {
                         });
                         ui.separator();
                         
-                        let lines_changed = self.analysis_panel.show(ui);
-                        if lines_changed && self.engine_analyzing {
-                            self.stop_analysis();
-                            self.start_analysis();
+                        // Show analysis panel and handle clicked moves
+                        let clicked_move = self.analysis_panel.show(ui);
+                        
+                        // If user clicked a move from engine line, apply it as a fork
+                        if let Some(uci_move) = clicked_move {
+                            self.apply_engine_move(&uci_move);
                         }
                     }
                     AppMode::Study => {

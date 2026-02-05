@@ -121,7 +121,7 @@ impl GameState {
     }
 
     /// Get current position (the one we're viewing)
-    fn current_position(&self) -> &Chess {
+    pub fn current_position(&self) -> &Chess {
         &self.positions[self.current_index].position
     }
 
