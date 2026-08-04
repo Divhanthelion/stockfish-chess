@@ -29,23 +29,13 @@ impl EngineLine {
         }
     }
 
-    pub fn score_for_sorting(&self) -> f32 {
-        if let Some(mate) = self.score_mate {
-            if mate > 0 {
-                1000.0 - mate as f32
-            } else {
-                -1000.0 + mate.abs() as f32
-            }
-        } else if let Some(cp) = self.score_cp {
-            cp as f32 / 100.0
-        } else {
-            0.0
-        }
-    }
-
     pub fn normalized_score(&self) -> f32 {
         if let Some(mate) = self.score_mate {
-            if mate > 0 { 1.0 } else { -1.0 }
+            if mate > 0 {
+                1.0
+            } else {
+                -1.0
+            }
         } else if let Some(cp) = self.score_cp {
             let pawns = (cp as f32 / 100.0).clamp(-10.0, 10.0);
             pawns / 10.0
@@ -89,7 +79,7 @@ impl AnalysisPanel {
     /// This allows the app to reset to the base position and apply moves from there
     pub fn show(&mut self, ui: &mut Ui) -> Option<(String, Vec<String>)> {
         let mut result: Option<(String, Vec<String>)> = None;
-        
+
         ui.vertical(|ui| {
             ui.heading("Analysis");
             ui.separator();
@@ -102,7 +92,7 @@ impl AnalysisPanel {
                 } else {
                     ui.label("⏸ Paused");
                 }
-                
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("d{}", self.current_depth));
                 });
@@ -135,11 +125,13 @@ impl AnalysisPanel {
             ui.separator();
 
             // Engine lines - only show display_lines
-            let lines_to_show: Vec<_> = self.all_lines.iter()
+            let lines_to_show: Vec<_> = self
+                .all_lines
+                .iter()
                 .take(self.display_lines as usize)
                 .cloned()
                 .collect();
-                
+
             for line in &lines_to_show {
                 if let Some(path) = self.show_engine_line(ui, line) {
                     // Include base_fen so app can reset to correct position
@@ -152,7 +144,7 @@ impl AnalysisPanel {
                 ui.label("No analysis yet...");
             }
         });
-        
+
         result
     }
 
@@ -162,10 +154,8 @@ impl AnalysisPanel {
             return;
         }
         let bar_height = 24.0;
-        let (rect, _response) = ui.allocate_exact_size(
-            Vec2::new(available_width, bar_height),
-            egui::Sense::hover(),
-        );
+        let (rect, _response) =
+            ui.allocate_exact_size(Vec2::new(available_width, bar_height), egui::Sense::hover());
 
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return;
@@ -179,12 +169,9 @@ impl AnalysisPanel {
         // White portion
         let score = line.normalized_score();
         let white_width = (rect.width() * (0.5 + score * 0.5)).clamp(0.0, rect.width());
-        
+
         if white_width > 0.0 {
-            let white_rect = Rect::from_min_size(
-                rect.min,
-                Vec2::new(white_width, rect.height()),
-            );
+            let white_rect = Rect::from_min_size(rect.min, Vec2::new(white_width, rect.height()));
             painter.rect_filled(white_rect, CornerRadius::same(4), Color32::WHITE);
         }
 
@@ -199,7 +186,12 @@ impl AnalysisPanel {
         );
 
         // Border
-        painter.rect_stroke(rect, CornerRadius::same(4), Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Middle);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(4),
+            Stroke::new(1.0, Color32::GRAY),
+            egui::StrokeKind::Middle,
+        );
 
         // Score text
         if rect.width() > 50.0 && rect.height() > 10.0 {
@@ -219,11 +211,11 @@ impl AnalysisPanel {
     /// Returns Vec<move_uci> - the full path up to and including the clicked move
     fn show_engine_line(&self, ui: &mut Ui, line: &EngineLine) -> Option<Vec<String>> {
         let mut clicked_path: Option<Vec<String>> = None;
-        
+
         ui.horizontal_wrapped(|ui| {
             // Line number and score
             ui.label(format!("{}.", line.id));
-            
+
             let score_text = line.format_score();
             let color = if line.score_cp.unwrap_or(0) > 0 || line.score_mate.unwrap_or(0) > 0 {
                 Color32::GREEN
@@ -233,7 +225,7 @@ impl AnalysisPanel {
                 ui.visuals().text_color()
             };
             ui.colored_label(color, score_text);
-            
+
             // PV moves as clickable hyperlinks (ALL of them)
             if !line.pv.is_empty() {
                 for (i, mv) in line.pv.iter().enumerate() {
@@ -241,12 +233,14 @@ impl AnalysisPanel {
                     let text = egui::RichText::new(mv)
                         .color(ui.visuals().hyperlink_color)
                         .underline();
-                    
-                    let response = ui.add(egui::Button::new(text)
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
-                        .sense(egui::Sense::click()));
-                    
+
+                    let response = ui.add(
+                        egui::Button::new(text)
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .sense(egui::Sense::click()),
+                    );
+
                     if response.clicked() {
                         // Return all moves from start up to and including clicked move
                         clicked_path = Some(line.pv[..=i].to_vec());
@@ -255,18 +249,25 @@ impl AnalysisPanel {
                 }
             }
         });
-        
+
         clicked_path
     }
 
     /// Update a line from engine output (always store up to 5)
-    pub fn update_line(&mut self, multipv: u32, score_cp: Option<i32>, score_mate: Option<i32>, depth: Option<u32>, pv: Vec<String>) {
+    pub fn update_line(
+        &mut self,
+        multipv: u32,
+        score_cp: Option<i32>,
+        score_mate: Option<i32>,
+        depth: Option<u32>,
+        pv: Vec<String>,
+    ) {
         let id = multipv.max(1);
-        
+
         if let Some(d) = depth {
             self.current_depth = self.current_depth.max(d);
         }
-        
+
         // Find existing line or create new
         if let Some(line) = self.all_lines.iter_mut().find(|l| l.id == id) {
             line.score_cp = score_cp;
@@ -285,16 +286,13 @@ impl AnalysisPanel {
                 depth: depth.unwrap_or(0),
                 pv,
             });
-            // Sort by score (best first)
-            self.all_lines.sort_by(|a, b| {
-                b.score_for_sorting().partial_cmp(&a.score_for_sorting()).unwrap()
-            });
-            // Reassign IDs after sorting to match multipv order
-            for (i, line) in self.all_lines.iter_mut().enumerate() {
-                line.id = (i + 1) as u32;
-            }
         }
-        
+
+        // MultiPV IDs already express Stockfish's best-to-worst ordering.
+        // Scores are white-relative in the UI, so sorting by score would
+        // reverse the engine's lines whenever Black is to move.
+        self.all_lines.sort_by_key(|line| line.id);
+
         // Track max calculated
         self.max_calculated = self.max_calculated.max(id);
     }
@@ -305,12 +303,42 @@ impl AnalysisPanel {
         self.total_nodes = 0;
         self.max_calculated = 5;
     }
+}
 
-    pub fn get_display_lines(&self) -> u32 {
-        self.display_lines
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_stockfish_multipv_order() {
+        let mut panel = AnalysisPanel::default();
+        panel.update_line(2, Some(150), None, Some(10), vec!["d7d5".to_string()]);
+        panel.update_line(1, Some(-80), None, Some(11), vec!["e7e5".to_string()]);
+
+        assert_eq!(
+            panel
+                .all_lines
+                .iter()
+                .map(|line| line.id)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(panel.all_lines[0].score_cp, Some(-80));
+        assert_eq!(panel.all_lines[1].score_cp, Some(150));
     }
-    
-    pub fn set_display_lines(&mut self, n: u32) {
-        self.display_lines = n.clamp(1, 5);
+
+    #[test]
+    fn formats_white_relative_scores() {
+        let centipawns = EngineLine {
+            score_cp: Some(-125),
+            ..EngineLine::default()
+        };
+        let mate = EngineLine {
+            score_mate: Some(3),
+            ..EngineLine::default()
+        };
+
+        assert_eq!(centipawns.format_score(), "-1.25");
+        assert_eq!(mate.format_score(), "+M3");
     }
 }

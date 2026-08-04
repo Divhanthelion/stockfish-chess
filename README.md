@@ -1,227 +1,187 @@
 # Stockfish Chess
 
-A beautiful, cross-platform chess game with Stockfish AI integration, built with Rust and egui.
+A cross-platform desktop chess application built with Rust and egui. Chess rules
+are handled by `shakmaty`, while Stockfish runs as a separate UCI engine process.
 
 ## Features
 
-- 🎨 **Beautiful GUI** - Clean, modern interface built with egui
-- 🤖 **Stockfish Integration** - Play against the world-class Stockfish engine
-- 🎯 **Adjustable Difficulty** - Choose from multiple skill levels
-- 🎭 **Themes** - Classic, Lichess, Chess.com, and Dark themes
-- ♟️ **Legal Move Highlighting** - Visual indicators for valid moves
-- 📋 **Move History** - Track all moves in standard algebraic notation
-- 🔄 **Board Flip** - View the board from either side
-- 💾 **Persistent Settings** - Your preferences are saved automatically
+- Play either color against Stockfish with seven difficulty levels
+- Game, multi-line analysis, and study modes
+- Legal move, last move, and check highlighting
+- Queen, rook, bishop, and knight promotion selection
+- Move history, undo, board flipping, and persistent preferences
+- Four board themes
+- Study chapters, comments, variations, JSON persistence, and PGN export
+- User-visible engine startup and runtime errors
 
 ## Prerequisites
 
-### 1. Rust Toolchain
+### Rust
 
-Install Rust (1.75.0 or later):
+Install Rust 1.75 or newer:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### 2. Stockfish Engine
+### Stockfish
 
-This application requires the Stockfish chess engine binary. **The binary is NOT included** in this repository.
+Download Stockfish from the
+[official downloads page](https://stockfishchess.org/download/). The engine
+binary is intentionally not included in this repository.
 
-#### Download Stockfish
+The app searches for an executable in this order:
 
-1. Visit [Stockfish Downloads](https://stockfishchess.org/download/)
-2. Download the appropriate binary for your platform:
-   - **macOS (Apple Silicon)**: `stockfish-macos-m1-apple-silicon`
-   - **macOS (Intel)**: `stockfish-macos-x86-64`
-   - **Linux**: `stockfish-ubuntu-x86-64`
-   - **Windows**: `stockfish-windows-x86-64.exe`
+1. The path in the `STOCKFISH_PATH` environment variable
+2. Next to the application executable
+3. The current working directory
+4. `~/bin`
+5. Common Homebrew and Unix binary directories
+6. Every directory on the system `PATH`
 
-#### Setup
+Official filenames beginning with `stockfish`, such as
+`stockfish-macos-m1-apple-silicon`, are recognized without being renamed.
 
-Place the Stockfish binary in one of these locations (searched in order):
-
-1. `./stockfish` (same directory as the executable)
-2. `~/bin/stockfish`
-3. `/usr/local/bin/stockfish`
-4. `/opt/homebrew/bin/stockfish` (macOS Homebrew)
-5. System PATH (as `stockfish`)
-
-Or set a custom path by modifying `src/app.rs`:
-
-```rust
-let stockfish_path = [
-    "/path/to/your/stockfish",
-    // ... other paths
-];
-```
-
-#### macOS Quarantine Notice
-
-If you downloaded Stockfish via browser, macOS may have quarantined it. Remove the quarantine attribute:
+To use a custom location:
 
 ```bash
+STOCKFISH_PATH="/path/to/stockfish" cargo run
+```
+
+On macOS, a browser download may need executable permission and quarantine
+removal:
+
+```bash
+chmod +x /path/to/stockfish
 xattr -d com.apple.quarantine /path/to/stockfish
 ```
 
-## Building
+If discovery or startup fails, the full error and setup hint are displayed in
+the application sidebar.
 
-### Debug Build
-
-```bash
-cargo build
-```
-
-### Release Build (Optimized)
-
-```bash
-cargo build --release
-```
-
-The executable will be at:
-- Debug: `target/debug/stockfish-chess`
-- Release: `target/release/stockfish-chess`
-
-## Running
-
-### From Cargo
+## Build and Run
 
 ```bash
 cargo run
 ```
 
-### Direct Execution
+For an optimized build:
 
 ```bash
-# Debug build
-./target/debug/stockfish-chess
-
-# Release build
+cargo build --release
 ./target/release/stockfish-chess
 ```
 
-## How to Play
+Enable application logs when troubleshooting:
 
-1. **Select a piece** - Click on any of your pieces (White starts)
-2. **View legal moves** - Valid destinations are shown with dots
-3. **Make a move** - Click on a highlighted square to move
-4. **Engine responds** - Stockfish will automatically play as Black
+```bash
+RUST_LOG=info cargo run
+```
 
-### Controls
+## Playing
 
-- **New Game** - Start a fresh game
-- **Flip Board** - Rotate the board 180°
-- **Play as** - Switch between White and Black (starts new game)
-- **Difficulty** - Adjust Stockfish strength:
-  - Beginner (800 Elo)
-  - Casual (1200 Elo)
-  - Intermediate (1600 Elo)
-  - Advanced (2000 Elo)
-  - Expert (2400 Elo)
-  - Grandmaster (2800 Elo)
-  - Maximum (3200+ Elo)
-- **Theme** - Change board appearance
+1. Choose White or Black under **Play as**.
+2. Select a piece to display its legal destinations.
+3. Select a destination to move.
+4. When a pawn reaches the back rank, choose its promotion piece.
+5. Stockfish responds automatically on its turn.
+
+Draw offers are evaluated from Stockfish's perspective. Stockfish accepts when
+it does not evaluate its own advantage above 0.50 pawns.
+
+## Modes
+
+- **Game** — play against Stockfish, adjust difficulty, resign, offer a draw,
+  undo moves, and export completed games.
+- **Analysis** — run continuous five-line Stockfish analysis and play moves
+  from principal variations.
+- **Study** — organize positions into chapters and variations, add comments,
+  save studies locally, and export PGN.
+
+## Difficulty Levels
+
+- Novice (~1100)
+- Beginner (~1350)
+- Casual (~1500)
+- Intermediate (~1800)
+- Advanced (~2100)
+- Expert (~2500)
+- Maximum strength
 
 ## Architecture
 
-```
+```text
 src/
-├── main.rs          # Application entry point
-├── app.rs           # Main app state and UI coordination
-├── engine/          # Stockfish engine integration
-│   ├── mod.rs
-│   ├── actor.rs     # Engine process communication
-│   └── difficulty.rs # Difficulty level definitions
-├── game/            # Chess game logic
-│   ├── mod.rs
-│   └── state.rs     # Game state management
-└── ui/              # User interface components
-    ├── mod.rs
-    ├── board.rs     # Chess board rendering & interaction
-    ├── controls.rs  # Control panel (buttons, dropdowns)
-    ├── move_list.rs # Move history display
-    ├── pieces.rs    # SVG piece rendering
-    └── theme.rs     # Color themes
+├── main.rs              Application entry point
+├── app.rs               State, modes, engine coordination, and dialogs
+├── engine/
+│   ├── actor.rs         Background UCI process actor
+│   ├── discovery.rs     Cross-platform Stockfish discovery
+│   └── difficulty.rs    Strength presets
+├── game/
+│   └── state.rs         Rules, history, outcomes, FEN, SAN, and UCI
+├── study/
+│   └── mod.rs           Study tree and persistence
+└── ui/
+    ├── analysis.rs      Evaluation bar and principal variations
+    ├── board.rs         Board rendering and interaction
+    ├── controls.rs      Game controls
+    ├── move_list.rs     Move history
+    ├── pieces.rs        Embedded SVG rendering
+    ├── study_panel.rs   Study controls
+    └── theme.rs         Board themes
 ```
 
-### Key Dependencies
-
-- **egui/eframe** - Immediate-mode GUI framework
-- **shakmaty** - Chess move generation and validation
-- **resvg/tiny-skia** - SVG rendering for chess pieces
-- **tokio** - Async runtime (for UI responsiveness)
-- **serde** - Settings serialization
+The egui thread sends commands over an `mpsc` channel to a dedicated engine
+thread. That thread owns the Stockfish child process and communicates through
+UCI over stdin/stdout. The UI remains responsive while Stockfish searches.
 
 ## Development
 
-### Project Structure
+Run the quality checks:
 
-- `src/assets/pieces/` - SVG chess piece graphics (embedded at compile time)
-- `src/engine/` - UCI protocol implementation for Stockfish communication
-- `src/game/` - Chess rules and state management
-- `src/ui/` - egui components for the interface
+```bash
+cargo fmt --check
+cargo clippy --all-targets
+cargo test
+```
 
-### Engine Communication
-
-The app communicates with Stockfish via the [UCI (Universal Chess Interface)](https://wbec-ridderkerk.nl/html/UCIProtocol.html) protocol:
-
-1. Spawns Stockfish as a child process
-2. Sends commands via stdin (`uci`, `position`, `go`, etc.)
-3. Parses responses from stdout (`uciok`, `bestmove`, `info`, etc.)
-4. Runs in a dedicated thread to avoid blocking the UI
-
-### Adding Features
-
-The modular architecture makes it easy to extend:
-
-- **New themes**: Add variants to `src/ui/theme.rs`
-- **New difficulties**: Modify `src/engine/difficulty.rs`
-- **UI components**: Add modules in `src/ui/`
+Tests cover game state, promotion choices, UCI command construction and parsing,
+engine discovery, score orientation, and draw acceptance.
 
 ## Troubleshooting
 
-### "Engine not found" error
+### Stockfish unavailable
 
-- Ensure Stockfish binary is in one of the expected locations
-- Check that the binary has execute permissions: `chmod +x stockfish`
-- On macOS, remove quarantine: `xattr -d com.apple.quarantine stockfish`
+- Confirm `STOCKFISH_PATH` points to a file, not a directory.
+- Confirm the binary is executable.
+- Confirm the binary matches the machine architecture.
+- Read the detailed startup error in the sidebar or run with `RUST_LOG=info`.
 
-### "Engine closed stdout unexpectedly"
+### Pieces do not render
 
-- The Stockfish binary may be incompatible with your system
-- Try downloading a different version from the official site
-- Check system architecture matches (ARM vs x86_64)
+Ensure all SVG files are present under `src/assets/pieces/`.
 
-### Pieces not rendering
+### Slow debug performance
 
-- Ensure SVG assets are present at `src/assets/pieces/`
-- Check for console errors about missing textures
+Use `cargo run --release`; release builds enable LTO.
 
-### Slow performance
+## Roadmap
 
-- Build in release mode: `cargo build --release`
-- Reduce Stockfish thinking time in `src/app.rs` (default: 1000ms)
+- PGN import
+- Opening-book support
+- Time controls
+- Online multiplayer
+- Move sounds
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- [Stockfish](https://stockfishchess.org/) - The powerful open-source chess engine
-- [shakmaty](https://github.com/niklasf/shakmaty) - Rust chess library
-- [egui](https://github.com/emilk/egui) - Immediate-mode GUI library
-- Chess piece SVGs derived from [lichess-org/lila](https://github.com/lichess-org/lila) (CC0)
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
-
-### TODO / Future Features
-
-- [ ] PGN import/export
-- [ ] Opening book integration
-- [ ] Analysis mode with engine evaluation
-- [ ] Time controls (blitz, rapid, classical)
-- [ ] Online multiplayer
-- [ ] Custom board themes
-- [ ] Move sound effects
+- [Stockfish](https://stockfishchess.org/)
+- [shakmaty](https://github.com/niklasf/shakmaty)
+- [egui](https://github.com/emilk/egui)
+- Piece SVGs derived from [lichess-org/lila](https://github.com/lichess-org/lila)
+  (CC0)

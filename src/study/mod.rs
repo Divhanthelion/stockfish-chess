@@ -37,17 +37,10 @@ impl StudyNode {
         }
     }
 
-    /// Add a child node
-    pub fn add_child(&mut self, move_record: MoveRecord, fen: String) -> usize {
-        let id = self.children.len();
-        self.children.push(StudyNode::new_child(id, move_record, fen));
-        id
-    }
-
     /// Get all lines (sequences of moves) from this node
     pub fn get_lines(&self) -> Vec<Vec<String>> {
         let mut lines = Vec::new();
-        
+
         for child in &self.children {
             let child_lines = child.get_lines_recursive();
             for mut line in child_lines {
@@ -55,17 +48,17 @@ impl StudyNode {
                 lines.push(line);
             }
         }
-        
+
         if lines.is_empty() {
             lines.push(Vec::new());
         }
-        
+
         lines
     }
 
     fn get_lines_recursive(&self) -> Vec<Vec<String>> {
         let mut lines = Vec::new();
-        
+
         for child in &self.children {
             let child_lines = child.get_lines_recursive();
             for mut line in child_lines {
@@ -73,11 +66,11 @@ impl StudyNode {
                 lines.push(line);
             }
         }
-        
+
         if lines.is_empty() {
             lines.push(Vec::new());
         }
-        
+
         lines
     }
 }
@@ -97,7 +90,9 @@ impl StudyChapter {
         Self {
             id,
             name,
-            root: StudyNode::new_root("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string()),
+            root: StudyNode::new_root(
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            ),
             current_path: Vec::new(),
         }
     }
@@ -153,7 +148,7 @@ impl StudyChapter {
     /// Returns true if move was added, false if move already exists (navigates to it)
     pub fn add_move(&mut self, move_record: MoveRecord, fen: String) -> bool {
         let current = self.current_node_mut();
-        
+
         // Check if this move already exists as a child
         for (idx, child) in current.children.iter().enumerate() {
             if let Some(ref child_move) = child.move_record {
@@ -164,10 +159,12 @@ impl StudyChapter {
                 }
             }
         }
-        
+
         // Add new child
         let child_id = current.children.len();
-        current.children.push(StudyNode::new_child(child_id, move_record, fen));
+        current
+            .children
+            .push(StudyNode::new_child(child_id, move_record, fen));
         self.current_path.push(child_id);
         true
     }
@@ -185,7 +182,8 @@ impl StudyChapter {
 
     /// Get the main line (longest variation)
     pub fn get_main_line(&self) -> Vec<String> {
-        self.root.get_lines()
+        self.root
+            .get_lines()
             .into_iter()
             .max_by_key(|line| line.len())
             .unwrap_or_default()
@@ -194,11 +192,6 @@ impl StudyChapter {
     /// Go to start
     pub fn go_to_start(&mut self) {
         self.current_path.clear();
-    }
-
-    /// Check if we can go back
-    pub fn can_go_back(&self) -> bool {
-        !self.current_path.is_empty()
     }
 
     /// Check if we can go forward to a specific child
@@ -264,15 +257,15 @@ impl Study {
     /// Export to PGN
     pub fn to_pgn(&self) -> String {
         let mut pgn = String::new();
-        
+
         pgn.push_str(&format!("[Event \"{}\"]\n", self.name));
         pgn.push_str("[Site \"Stockfish Chess\"]\n");
         pgn.push_str(&format!("[Date \"{}\"]\n", &self.created_at[..10]));
-        
+
         for chapter in &self.chapters {
             pgn.push('\n');
             pgn.push_str(&format!("[Chapter \"{}\"]\n", chapter.name));
-            
+
             // Add comments for starting position
             if !chapter.root.comments.is_empty() {
                 for comment in &chapter.root.comments {
@@ -280,7 +273,7 @@ impl Study {
                 }
                 pgn.push('\n');
             }
-            
+
             // Export main line
             let line = chapter.get_main_line();
             for (i, san) in line.iter().enumerate() {
@@ -290,10 +283,10 @@ impl Study {
                 pgn.push_str(san);
                 pgn.push(' ');
             }
-            
+
             pgn.push_str("*\n");
         }
-        
+
         pgn
     }
 }
@@ -315,9 +308,9 @@ impl StudyManager {
             .unwrap_or_else(|| std::env::current_dir().unwrap())
             .join("Stockfish-Chess")
             .join("studies");
-        
+
         std::fs::create_dir_all(&studies_dir).ok();
-        
+
         Self { studies_dir }
     }
 
@@ -336,10 +329,10 @@ impl StudyManager {
 
     pub fn list_studies(&self) -> Result<Vec<(String, String)>, std::io::Error> {
         let mut studies = Vec::new();
-        
+
         for entry in std::fs::read_dir(&self.studies_dir)? {
             let entry = entry?;
-            if entry.path().extension().map_or(false, |e| e == "json") {
+            if entry.path().extension().is_some_and(|e| e == "json") {
                 if let Ok(json) = std::fs::read_to_string(entry.path()) {
                     if let Ok(study) = serde_json::from_str::<Study>(&json) {
                         studies.push((study.id, study.name));
@@ -347,13 +340,8 @@ impl StudyManager {
                 }
             }
         }
-        
-        Ok(studies)
-    }
 
-    pub fn delete_study(&self, id: &str) -> Result<(), std::io::Error> {
-        let path = self.studies_dir.join(format!("{}.json", id));
-        std::fs::remove_file(path)
+        Ok(studies)
     }
 }
 

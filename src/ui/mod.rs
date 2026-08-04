@@ -1,15 +1,15 @@
+mod analysis;
 mod board;
-mod pieces;
 mod controls;
 mod move_list;
-mod theme;
-mod analysis;
+mod pieces;
 mod study_panel;
+mod theme;
 
-pub use board::ChessBoard;
-pub use pieces::PieceRenderer;
-pub use controls::{ControlPanel, ControlAction};
-pub use move_list::MoveList;
-pub use theme::Theme;
 pub use analysis::AnalysisPanel;
-pub use study_panel::{StudyPanel, StudyNavAction};
+pub use board::ChessBoard;
+pub use controls::{ControlAction, ControlPanel};
+pub use move_list::MoveList;
+pub use pieces::PieceRenderer;
+pub use study_panel::{StudyNavAction, StudyPanel};
+pub use theme::Theme;

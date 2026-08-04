@@ -25,6 +25,7 @@ impl ControlPanel {
         player_color: &mut PlayerColor,
         outcome: GameOutcome,
         is_engine_thinking: bool,
+        is_engine_ready: bool,
     ) -> Option<ControlAction> {
         let mut action = None;
 
@@ -91,11 +92,17 @@ impl ControlPanel {
             // Play as
             ui.label("Play as:");
             ui.horizontal(|ui| {
-                if ui.selectable_label(*player_color == PlayerColor::White, "White").clicked() {
+                if ui
+                    .selectable_label(*player_color == PlayerColor::White, "White")
+                    .clicked()
+                {
                     *player_color = PlayerColor::White;
                     action = Some(ControlAction::SetPlayerColor(PlayerColor::White));
                 }
-                if ui.selectable_label(*player_color == PlayerColor::Black, "Black").clicked() {
+                if ui
+                    .selectable_label(*player_color == PlayerColor::Black, "Black")
+                    .clicked()
+                {
                     *player_color = PlayerColor::Black;
                     action = Some(ControlAction::SetPlayerColor(PlayerColor::Black));
                 }
@@ -109,7 +116,10 @@ impl ControlPanel {
                 .selected_text(difficulty.label())
                 .show_ui(ui, |ui| {
                     for level in DifficultyLevel::all() {
-                        if ui.selectable_value(difficulty, *level, level.label()).clicked() {
+                        if ui
+                            .selectable_value(difficulty, *level, level.label())
+                            .clicked()
+                        {
                             action = Some(ControlAction::SetDifficulty(*level));
                         }
                     }
@@ -133,16 +143,22 @@ impl ControlPanel {
             if outcome == GameOutcome::InProgress {
                 ui.add_space(10.0);
                 ui.separator();
-                
+
                 ui.horizontal(|ui| {
                     if ui.button("🏳 Resign").clicked() {
                         action = Some(ControlAction::Resign);
                     }
-                    if ui.button("🤝 Offer Draw").clicked() {
+                    let draw_button = ui
+                        .add_enabled(
+                            is_engine_ready && !is_engine_thinking,
+                            egui::Button::new("🤝 Offer Draw"),
+                        )
+                        .on_hover_text("Stockfish must be ready to evaluate a draw offer");
+                    if draw_button.clicked() {
                         action = Some(ControlAction::OfferDraw);
                     }
                 });
-                
+
                 if ui.button("↩ Undo Move").clicked() {
                     action = Some(ControlAction::Undo);
                 }

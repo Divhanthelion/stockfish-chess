@@ -38,7 +38,6 @@ fn piece_key(role: Role, color: Color) -> &'static str {
 pub struct PieceRenderer {
     textures: HashMap<(String, u32), TextureHandle>,
     svg_data: HashMap<String, String>,
-    current_size: u32,
 }
 
 impl PieceRenderer {
@@ -51,7 +50,6 @@ impl PieceRenderer {
         Self {
             textures: HashMap::new(),
             svg_data,
-            current_size: 0,
         }
     }
 
@@ -104,16 +102,6 @@ impl PieceRenderer {
             pixels,
             source_size: vec2(size as f32, size as f32),
         })
-    }
-
-    pub fn invalidate_cache(&mut self) {
-        self.textures.clear();
-    }
-
-    pub fn set_size(&mut self, size: u32) {
-        if self.current_size != size {
-            self.current_size = size;
-        }
     }
 }
 

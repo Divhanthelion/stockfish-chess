@@ -1,8 +1,8 @@
-use shakmaty::{
-    fen::Fen, san::San, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move,
-    Position, Role, Square,
-};
 use serde::{Deserialize, Serialize};
+use shakmaty::{
+    fen::Fen, san::San, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move, Position,
+    Role, Square,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,6 +23,15 @@ pub enum GameError {
 pub enum PlayerColor {
     White,
     Black,
+}
+
+impl PlayerColor {
+    pub const fn opposite(self) -> Self {
+        match self {
+            PlayerColor::White => PlayerColor::Black,
+            PlayerColor::Black => PlayerColor::White,
+        }
+    }
 }
 
 impl From<Color> for PlayerColor {
@@ -100,7 +109,9 @@ impl GameState {
     }
 
     pub fn from_fen(fen: &str) -> Result<Self, GameError> {
-        let fen: Fen = fen.parse().map_err(|e| GameError::InvalidFen(format!("{:?}", e)))?;
+        let fen: Fen = fen
+            .parse()
+            .map_err(|e| GameError::InvalidFen(format!("{:?}", e)))?;
         let position: Chess = fen
             .into_position(CastlingMode::Standard)
             .map_err(|e| GameError::InvalidFen(format!("{:?}", e)))?;
@@ -118,10 +129,22 @@ impl GameState {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         position.board().hash(&mut hasher);
         position.turn().hash(&mut hasher);
-        position.castles().has(Color::White, shakmaty::CastlingSide::KingSide).hash(&mut hasher);
-        position.castles().has(Color::White, shakmaty::CastlingSide::QueenSide).hash(&mut hasher);
-        position.castles().has(Color::Black, shakmaty::CastlingSide::KingSide).hash(&mut hasher);
-        position.castles().has(Color::Black, shakmaty::CastlingSide::QueenSide).hash(&mut hasher);
+        position
+            .castles()
+            .has(Color::White, shakmaty::CastlingSide::KingSide)
+            .hash(&mut hasher);
+        position
+            .castles()
+            .has(Color::White, shakmaty::CastlingSide::QueenSide)
+            .hash(&mut hasher);
+        position
+            .castles()
+            .has(Color::Black, shakmaty::CastlingSide::KingSide)
+            .hash(&mut hasher);
+        position
+            .castles()
+            .has(Color::Black, shakmaty::CastlingSide::QueenSide)
+            .hash(&mut hasher);
         position.ep_square(EnPassantMode::Legal).hash(&mut hasher);
         hasher.finish()
     }
@@ -148,9 +171,9 @@ impl GameState {
         if let Some(result) = self.game_result {
             return result;
         }
-        
+
         let pos = self.current_position();
-        
+
         if pos.is_checkmate() {
             let winner = match pos.turn() {
                 Color::White => PlayerColor::Black,
@@ -195,22 +218,6 @@ impl GameState {
             .collect()
     }
 
-    pub fn make_move_san(&mut self, san_str: &str) -> Result<MoveRecord, GameError> {
-        if self.outcome() != GameOutcome::InProgress {
-            return Err(GameError::GameOver);
-        }
-
-        let san: San = san_str
-            .parse()
-            .map_err(|_| GameError::InvalidMove(san_str.to_string()))?;
-
-        let m = san
-            .to_move(self.current_position())
-            .map_err(|_| GameError::InvalidMove(san_str.to_string()))?;
-
-        self.make_move(m)
-    }
-
     pub fn make_move_uci(&mut self, uci_str: &str) -> Result<MoveRecord, GameError> {
         if self.outcome() != GameOutcome::InProgress {
             return Err(GameError::GameOver);
@@ -240,13 +247,15 @@ impl GameState {
     }
 
     fn apply_move(&mut self, m: Move) -> Result<MoveRecord, GameError> {
-        let san = San::from_move(self.current_position(), m.clone());
-        let uci = UciMove::from_move(m.clone(), CastlingMode::Standard);
+        let san = San::from_move(self.current_position(), m);
+        let uci = UciMove::from_move(m, CastlingMode::Standard);
 
         // Play the move on current position
-        let new_position = self.current_position().clone().play(m).map_err(|e| {
-            GameError::InvalidMove(format!("{:?}", e))
-        })?;
+        let new_position = self
+            .current_position()
+            .clone()
+            .play(m)
+            .map_err(|e| GameError::InvalidMove(format!("{:?}", e)))?;
 
         let resulting_fen = Fen::from_position(&new_position, EnPassantMode::Legal).to_string();
         let hash = Self::compute_hash(&new_position);
@@ -258,7 +267,10 @@ impl GameState {
         }
 
         // Add new position and move
-        self.positions.push(PositionState { position: new_position, hash });
+        self.positions.push(PositionState {
+            position: new_position,
+            hash,
+        });
         self.current_index += 1;
 
         let record = MoveRecord {
@@ -286,15 +298,6 @@ impl GameState {
             return Err(GameError::NoNextPosition);
         }
         self.current_index += 1;
-        Ok(())
-    }
-
-    /// Go to a specific move number (0 = start position)
-    pub fn go_to_position(&mut self, index: usize) -> Result<(), GameError> {
-        if index >= self.positions.len() {
-            return Err(GameError::InvalidMove("Position index out of range".to_string()));
-        }
-        self.current_index = index;
         Ok(())
     }
 
@@ -337,12 +340,6 @@ impl GameState {
         Some((piece.role, piece.color))
     }
 
-    pub fn all_pieces(&self) -> impl Iterator<Item = (Square, Role, Color)> + '_ {
-        Square::ALL.iter().filter_map(|&sq| {
-            self.piece_at(sq).map(|(role, color)| (sq, role, color))
-        })
-    }
-
     /// Resign the game - opponent wins
     pub fn resign(&mut self, color: PlayerColor) {
         let winner = match color {
@@ -351,12 +348,12 @@ impl GameState {
         };
         self.game_result = Some(GameOutcome::Resignation(winner));
     }
-    
+
     /// Agree to a draw
     pub fn agree_to_draw(&mut self) {
         self.game_result = Some(GameOutcome::DrawByAgreement);
     }
-    
+
     /// Undo the last move (removes it from history)
     pub fn undo_last_move(&mut self) -> bool {
         if self.move_history.is_empty() {
@@ -415,7 +412,7 @@ mod tests {
     #[test]
     fn test_make_move() {
         let mut game = GameState::new();
-        let result = game.make_move_san("e4");
+        let result = game.make_move_uci("e2e4");
         assert!(result.is_ok());
         assert_eq!(game.turn(), PlayerColor::Black);
     }
@@ -423,26 +420,26 @@ mod tests {
     #[test]
     fn test_navigation() {
         let mut game = GameState::new();
-        
+
         // Make some moves
-        game.make_move_san("e4").unwrap();
-        game.make_move_san("e5").unwrap();
-        game.make_move_san("Nf3").unwrap();
-        
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g1f3").unwrap();
+
         assert_eq!(game.current_index(), 3);
-        
+
         // Go back
         game.go_back().unwrap();
         assert_eq!(game.current_index(), 2);
-        
+
         // Go forward
         game.go_forward().unwrap();
         assert_eq!(game.current_index(), 3);
-        
+
         // Go to start
         game.go_to_start();
         assert_eq!(game.current_index(), 0);
-        
+
         // Go to end
         game.go_to_end();
         assert_eq!(game.current_index(), 3);
@@ -451,14 +448,37 @@ mod tests {
     #[test]
     fn test_scholars_mate() {
         let mut game = GameState::new();
-        game.make_move_san("e4").unwrap();
-        game.make_move_san("e5").unwrap();
-        game.make_move_san("Qh5").unwrap();
-        game.make_move_san("Nc6").unwrap();
-        game.make_move_san("Bc4").unwrap();
-        game.make_move_san("Nf6").unwrap();
-        game.make_move_san("Qxf7").unwrap();
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("d1h5").unwrap();
+        game.make_move_uci("b8c6").unwrap();
+        game.make_move_uci("f1c4").unwrap();
+        game.make_move_uci("g8f6").unwrap();
+        game.make_move_uci("h5f7").unwrap();
 
         assert_eq!(game.outcome(), GameOutcome::Checkmate(PlayerColor::White));
+    }
+
+    #[test]
+    fn test_promotion_has_all_piece_choices() {
+        let mut game = GameState::from_fen("7k/P7/8/8/8/8/8/7K w - - 0 1").unwrap();
+        let promotion_moves = game
+            .legal_moves_for_square(Square::A7)
+            .into_iter()
+            .filter(|m| m.to() == Square::A8)
+            .collect::<Vec<_>>();
+
+        let mut roles = promotion_moves
+            .iter()
+            .filter_map(|m| m.promotion())
+            .collect::<Vec<_>>();
+        roles.sort();
+
+        assert_eq!(promotion_moves.len(), 4);
+        assert_eq!(roles, [Role::Knight, Role::Bishop, Role::Rook, Role::Queen]);
+
+        let record = game.make_move_uci("a7a8q").unwrap();
+        assert_eq!(record.uci, "a7a8q");
+        assert_eq!(game.piece_at(Square::A8), Some((Role::Queen, Color::White)));
     }
 }

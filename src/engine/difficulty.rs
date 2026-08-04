@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DifficultyLevel {
     Novice,
     Beginner,
+    #[default]
     Casual,
     Intermediate,
     Advanced,
@@ -66,28 +67,10 @@ impl DifficultyLevel {
                 "setoption name UCI_LimitStrength value true".to_string(),
                 "setoption name UCI_Elo value 2500".to_string(),
             ],
-            DifficultyLevel::Maximum => vec![
-                "setoption name UCI_LimitStrength value false".to_string(),
-            ],
+            DifficultyLevel::Maximum => {
+                vec!["setoption name UCI_LimitStrength value false".to_string()]
+            }
         }
-    }
-
-    pub fn approximate_elo(&self) -> u32 {
-        match self {
-            DifficultyLevel::Novice => 1100,
-            DifficultyLevel::Beginner => 1350,
-            DifficultyLevel::Casual => 1500,
-            DifficultyLevel::Intermediate => 1800,
-            DifficultyLevel::Advanced => 2100,
-            DifficultyLevel::Expert => 2500,
-            DifficultyLevel::Maximum => 3500,
-        }
-    }
-}
-
-impl Default for DifficultyLevel {
-    fn default() -> Self {
-        DifficultyLevel::Casual
     }
 }
 

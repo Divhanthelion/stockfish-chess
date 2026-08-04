@@ -1,3 +1,3 @@
 mod state;
 
-pub use state::{GameState, GameOutcome, PlayerColor, MoveRecord};
+pub use state::{GameOutcome, GameState, MoveRecord, PlayerColor};

@@ -10,13 +10,9 @@ license = "MIT"
 # GUI
 egui = "0.33.3"
 eframe = { version = "0.33.3", features = ["persistence", "glow"] }
-egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 
 # Chess Logic
 shakmaty = "0.30"
-
-# Async runtime for UI
-tokio = { version = "1", features = ["rt-multi-thread"] }
 
 # SVG Rendering
 resvg = "0.44"
@@ -29,13 +25,9 @@ thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-shellexpand = "3"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 serde_json = "1"
-
-[dev-dependencies]
-egui_kittest = "0.33.3"
 
 [profile.release]
 lto = true
