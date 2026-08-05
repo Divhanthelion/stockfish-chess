@@ -3,7 +3,7 @@ name = "stockfish-chess"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75.0"
-description = "A beautiful chess game with Stockfish AI integration"
+description = "Desktop chess GUI with Stockfish UCI engine integration"
 license = "MIT"
 
 [dependencies]

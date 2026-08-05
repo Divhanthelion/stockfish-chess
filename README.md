@@ -1,7 +1,15 @@
 # Stockfish Chess
 
 A cross-platform desktop chess application built with Rust and egui. Chess rules
-are handled by `shakmaty`, while Stockfish runs as a separate UCI engine process.
+are handled by `shakmaty`. Stockfish runs as a separate UCI engine process that
+you install yourself.
+
+**Two different binaries:**
+
+| Command | What it is |
+| --- | --- |
+| `stockfish` | The Stockfish chess engine (UCI, no GUI) |
+| `stockfish-chess` | This Rust desktop app (GUI) |
 
 ## Features
 
@@ -10,7 +18,7 @@ are handled by `shakmaty`, while Stockfish runs as a separate UCI engine process
 - Legal move, last move, and check highlighting
 - Queen, rook, bishop, and knight promotion selection
 - Move history, undo, board flipping, and persistent preferences
-- Four board themes
+- Four board themes: Classic, Lichess, Chess.com, and Dark
 - Study chapters, comments, variations, JSON persistence, and PGN export
 - User-visible engine startup and runtime errors
 
@@ -24,28 +32,61 @@ Install Rust 1.75 or newer:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Stockfish
+### Stockfish engine
 
-Download Stockfish from the
-[official downloads page](https://stockfishchess.org/download/). The engine
-binary is intentionally not included in this repository.
+This app needs a Stockfish binary. The engine is **not** included in the
+repository. Source it from one of these places:
 
-The app searches for an executable in this order:
+1. **Homebrew (recommended on macOS)**
+
+   ```bash
+   brew install stockfish
+   ```
+
+   That installs `stockfish` to `/opt/homebrew/bin` (Apple Silicon) or
+   `/usr/local/bin` (Intel), which is already searched by this app.
+
+2. **Official download**
+
+   Download from the
+   [Stockfish downloads page](https://stockfishchess.org/download/)
+   or the matching asset on the
+   [GitHub releases](https://github.com/official-stockfish/Stockfish/releases)
+   page. Prefer the binary that matches your OS and CPU
+   (for example `stockfish-macos-m1-apple-silicon` on Apple Silicon).
+
+3. **Linux package managers**
+
+   Many distributions package Stockfish. Examples:
+
+   ```bash
+   # Debian / Ubuntu
+   sudo apt install stockfish
+
+   # Fedora
+   sudo dnf install stockfish
+   ```
+
+#### Where to place a downloaded binary
+
+If you did not install via a package manager, put an executable named
+`stockfish` (or leave the official download name) in one of these locations:
 
 1. The path in the `STOCKFISH_PATH` environment variable
-2. Next to the application executable
+2. Next to the `stockfish-chess` application executable
 3. The current working directory
 4. `~/bin`
 5. Common Homebrew and Unix binary directories
-6. Every directory on the system `PATH`
+   (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`)
+6. Any directory on your system `PATH`
 
 Official filenames beginning with `stockfish`, such as
 `stockfish-macos-m1-apple-silicon`, are recognized without being renamed.
 
-To use a custom location:
+To point at a custom location:
 
 ```bash
-STOCKFISH_PATH="/path/to/stockfish" cargo run
+STOCKFISH_PATH="/path/to/stockfish" stockfish-chess
 ```
 
 On macOS, a browser download may need executable permission and quarantine
@@ -56,26 +97,38 @@ chmod +x /path/to/stockfish
 xattr -d com.apple.quarantine /path/to/stockfish
 ```
 
-If discovery or startup fails, the full error and setup hint are displayed in
-the application sidebar.
+If discovery or startup fails, the full error and setup hint appear in the
+application sidebar.
 
 ## Build and Run
 
+From the repository:
+
 ```bash
-cargo run
+cargo run --locked
 ```
 
-For an optimized build:
+Optimized release build:
 
 ```bash
-cargo build --release
+cargo build --release --locked
 ./target/release/stockfish-chess
 ```
 
-Enable application logs when troubleshooting:
+Install the GUI onto your `PATH` (`~/.cargo/bin`):
 
 ```bash
-RUST_LOG=info cargo run
+cargo install --path . --locked --force
+stockfish-chess
+```
+
+Use `--locked` so dependency resolution matches `Cargo.lock` and your current
+Rust toolchain.
+
+Enable logs when troubleshooting:
+
+```bash
+RUST_LOG=info cargo run --locked
 ```
 
 ## Playing
@@ -106,7 +159,7 @@ it does not evaluate its own advantage above 0.50 pawns.
 - Intermediate (~1800)
 - Advanced (~2100)
 - Expert (~2500)
-- Maximum strength
+- Maximum Strength
 
 ## Architecture
 
@@ -114,11 +167,13 @@ it does not evaluate its own advantage above 0.50 pawns.
 src/
 ├── main.rs              Application entry point
 ├── app.rs               State, modes, engine coordination, and dialogs
+├── assets/pieces/       Embedded SVG chess pieces
 ├── engine/
 │   ├── actor.rs         Background UCI process actor
 │   ├── discovery.rs     Cross-platform Stockfish discovery
 │   └── difficulty.rs    Strength presets
 ├── game/
+│   ├── mod.rs
 │   └── state.rs         Rules, history, outcomes, FEN, SAN, and UCI
 ├── study/
 │   └── mod.rs           Study tree and persistence
@@ -138,25 +193,28 @@ UCI over stdin/stdout. The UI remains responsive while Stockfish searches.
 
 ## Development
 
-Run the quality checks:
-
 ```bash
 cargo fmt --check
-cargo clippy --all-targets
-cargo test
+cargo clippy --all-targets -- -D warnings
+cargo test --locked
 ```
 
-Tests cover game state, promotion choices, UCI command construction and parsing,
-engine discovery, score orientation, and draw acceptance.
+Tests cover game state, promotion choices, UCI command construction and
+parsing, engine discovery, score orientation, draw acceptance, and engine
+timeouts.
 
 ## Troubleshooting
 
 ### Stockfish unavailable
 
+- Prefer `brew install stockfish` on macOS, then confirm `which stockfish`.
 - Confirm `STOCKFISH_PATH` points to a file, not a directory.
-- Confirm the binary is executable.
-- Confirm the binary matches the machine architecture.
+- Confirm the binary is executable and matches your machine architecture.
 - Read the detailed startup error in the sidebar or run with `RUST_LOG=info`.
+
+### `stockfish` opens a text prompt instead of the GUI
+
+That is the engine. Run the app with `stockfish-chess`.
 
 ### Pieces do not render
 
@@ -164,7 +222,7 @@ Ensure all SVG files are present under `src/assets/pieces/`.
 
 ### Slow debug performance
 
-Use `cargo run --release`; release builds enable LTO.
+Use `cargo run --release --locked`; release builds enable LTO.
 
 ## Roadmap
 
