@@ -1,5 +1,7 @@
 # Stockfish Chess
 
+![Stockfish Chess analyzing a Ruy Lopez](assets/hero.png)
+
 A cross-platform desktop chess application built with Rust and egui. Chess rules
 are handled by `shakmaty`. Stockfish runs as a separate UCI engine process that
 you install yourself.

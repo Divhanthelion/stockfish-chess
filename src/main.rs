@@ -1,6 +1,7 @@
 mod app;
 mod engine;
 mod game;
+mod hero;
 mod study;
 mod ui;
 
@@ -16,9 +17,16 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting Stockfish Chess");
 
+    let hero = std::env::var_os("STOCKFISH_CHESS_HERO").is_some();
+    let inner = if hero {
+        [1120.0, 740.0]
+    } else {
+        [900.0, 700.0]
+    };
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 700.0])
+            .with_inner_size(inner)
             .with_min_inner_size([600.0, 500.0])
             .with_title("Stockfish Chess"),
         ..Default::default()

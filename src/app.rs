@@ -1,5 +1,6 @@
 use crate::engine::{discover_stockfish, DifficultyLevel, EngineActor, EngineCommand, EngineEvent};
 use crate::game::{GameOutcome, GameState, MoveRecord, PlayerColor};
+use crate::hero::HeroShot;
 use crate::study::Study;
 use crate::ui::{
     AnalysisPanel, ChessBoard, ControlAction, ControlPanel, MoveList, PieceRenderer,
@@ -110,6 +111,7 @@ pub struct ChessApp {
     // Study
     study: Study,
     study_panel: StudyPanel,
+    hero: Option<HeroShot>,
 }
 
 impl ChessApp {
@@ -158,9 +160,17 @@ impl ChessApp {
             draw_offer_score: None,
             study: Study::new("Untitled Study".to_string()),
             study_panel: StudyPanel::default(),
+            hero: None,
         };
 
         app.clear_selection();
+        if let Some(hero) = HeroShot::from_env() {
+            app.state.theme = Theme::ChessCom;
+            app.state.mode = AppMode::Analysis;
+            app.game = HeroShot::opening_position();
+            app.select_square(HeroShot::selected_square());
+            app.hero = Some(hero);
+        }
         app
     }
 
@@ -894,8 +904,28 @@ impl eframe::App for ChessApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_engine_events(ctx);
 
+        if let Some(hero) = self.hero.as_mut() {
+            hero.tick(
+                ctx,
+                self.analysis_panel.all_lines.len(),
+                self.analysis_panel.current_depth,
+            );
+        }
+        if self.hero.is_some() && self.engine_ready && !self.engine_analyzing {
+            if self
+                .hero
+                .as_mut()
+                .is_some_and(HeroShot::should_start_analysis)
+            {
+                self.start_analysis();
+            }
+        }
+
         if self.engine_analyzing {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        if self.hero.is_some() {
+            ctx.request_repaint();
         }
 
         // Side panel for controls, analysis, or study
@@ -1068,6 +1098,9 @@ impl eframe::App for ChessApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.hero.is_some() {
+            return;
+        }
         eframe::set_value(storage, eframe::APP_KEY, &self.state);
     }
 
