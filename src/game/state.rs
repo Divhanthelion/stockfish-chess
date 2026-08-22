@@ -481,4 +481,278 @@ mod tests {
         assert_eq!(record.uci, "a7a8q");
         assert_eq!(game.piece_at(Square::A8), Some((Role::Queen, Color::White)));
     }
+
+    #[test]
+    fn undo_restores_previous_position() {
+        let mut game = GameState::new();
+        let initial_fen = game.fen();
+
+        game.make_move_uci("e2e4").unwrap();
+        assert_ne!(game.fen(), initial_fen);
+
+        assert!(game.undo_last_move());
+        assert_eq!(game.fen(), initial_fen);
+        assert_eq!(game.move_history().len(), 0);
+        assert_eq!(game.current_index(), 0);
+    }
+
+    #[test]
+    fn undo_on_empty_history_returns_false() {
+        let mut game = GameState::new();
+        assert!(!game.undo_last_move());
+        assert_eq!(game.current_index(), 0);
+    }
+
+    #[test]
+    fn undo_multiple_moves_preserves_invariants() {
+        let mut game = GameState::new();
+
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g1f3").unwrap();
+
+        assert_eq!(game.position_count(), 4);
+        assert_eq!(game.move_history().len(), 3);
+
+        assert!(game.undo_last_move());
+        assert_eq!(game.position_count(), 3);
+        assert_eq!(game.move_history().len(), 2);
+        assert_eq!(game.current_index(), 2);
+
+        assert!(game.undo_last_move());
+        assert_eq!(game.position_count(), 2);
+        assert_eq!(game.move_history().len(), 1);
+        assert_eq!(game.current_index(), 1);
+
+        assert!(game.undo_last_move());
+        assert_eq!(game.position_count(), 1);
+        assert_eq!(game.move_history().len(), 0);
+        assert_eq!(game.current_index(), 0);
+
+        assert!(!game.undo_last_move());
+    }
+
+    #[test]
+    fn undo_clears_game_result() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+        game.resign(PlayerColor::White);
+
+        assert!(matches!(
+            game.outcome(),
+            GameOutcome::Resignation(PlayerColor::Black)
+        ));
+
+        assert!(game.undo_last_move());
+        assert_eq!(game.outcome(), GameOutcome::InProgress);
+    }
+
+    #[test]
+    fn position_count_equals_history_length_plus_one() {
+        let mut game = GameState::new();
+        assert_eq!(game.position_count(), game.move_history().len() + 1);
+
+        game.make_move_uci("e2e4").unwrap();
+        assert_eq!(game.position_count(), game.move_history().len() + 1);
+
+        game.make_move_uci("e7e5").unwrap();
+        assert_eq!(game.position_count(), game.move_history().len() + 1);
+
+        game.undo_last_move();
+        assert_eq!(game.position_count(), game.move_history().len() + 1);
+    }
+
+    #[test]
+    fn current_index_bounded_by_position_count() {
+        let mut game = GameState::new();
+
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g1f3").unwrap();
+
+        assert!(game.current_index() < game.position_count());
+
+        game.go_to_start();
+        assert!(game.current_index() < game.position_count());
+        assert_eq!(game.current_index(), 0);
+
+        game.go_to_end();
+        assert!(game.current_index() < game.position_count());
+        assert_eq!(game.current_index(), game.position_count() - 1);
+    }
+
+    #[test]
+    fn navigation_does_not_modify_history() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g1f3").unwrap();
+
+        let history_len = game.move_history().len();
+        let position_count = game.position_count();
+
+        game.go_back().unwrap();
+        assert_eq!(game.move_history().len(), history_len);
+        assert_eq!(game.position_count(), position_count);
+
+        game.go_back().unwrap();
+        assert_eq!(game.move_history().len(), history_len);
+        assert_eq!(game.position_count(), position_count);
+
+        game.go_to_start();
+        assert_eq!(game.move_history().len(), history_len);
+        assert_eq!(game.position_count(), position_count);
+
+        game.go_forward().unwrap();
+        assert_eq!(game.move_history().len(), history_len);
+        assert_eq!(game.position_count(), position_count);
+
+        game.go_to_end();
+        assert_eq!(game.move_history().len(), history_len);
+        assert_eq!(game.position_count(), position_count);
+    }
+
+    #[test]
+    fn make_move_from_past_truncates_future() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g1f3").unwrap();
+
+        assert_eq!(game.position_count(), 4);
+
+        game.go_back().unwrap();
+        game.go_back().unwrap();
+        assert_eq!(game.current_index(), 1);
+
+        game.make_move_uci("d7d5").unwrap();
+
+        assert_eq!(game.position_count(), 3);
+        assert_eq!(game.move_history().len(), 2);
+        assert_eq!(game.current_index(), 2);
+        assert!(!game.can_go_forward());
+    }
+
+    #[test]
+    fn last_move_returns_correct_move_at_each_position() {
+        let mut game = GameState::new();
+
+        assert!(game.last_move().is_none());
+
+        game.make_move_uci("e2e4").unwrap();
+        assert_eq!(game.last_move().map(|r| &r.uci), Some(&"e2e4".to_string()));
+
+        game.make_move_uci("e7e5").unwrap();
+        assert_eq!(game.last_move().map(|r| &r.uci), Some(&"e7e5".to_string()));
+
+        game.go_back().unwrap();
+        assert_eq!(game.last_move().map(|r| &r.uci), Some(&"e2e4".to_string()));
+
+        game.go_to_start();
+        assert!(game.last_move().is_none());
+    }
+
+    #[test]
+    fn reset_restores_initial_state() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.resign(PlayerColor::White);
+
+        game.reset();
+
+        assert_eq!(game.turn(), PlayerColor::White);
+        assert_eq!(game.outcome(), GameOutcome::InProgress);
+        assert_eq!(game.move_history().len(), 0);
+        assert_eq!(game.position_count(), 1);
+        assert_eq!(game.current_index(), 0);
+    }
+
+    #[test]
+    fn can_go_back_and_forward_correct() {
+        let mut game = GameState::new();
+
+        assert!(!game.can_go_back());
+        assert!(!game.can_go_forward());
+
+        game.make_move_uci("e2e4").unwrap();
+
+        assert!(game.can_go_back());
+        assert!(!game.can_go_forward());
+
+        game.go_back().unwrap();
+
+        assert!(!game.can_go_back());
+        assert!(game.can_go_forward());
+    }
+
+    #[test]
+    fn draw_by_agreement_ends_game() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+        game.agree_to_draw();
+
+        assert_eq!(game.outcome(), GameOutcome::DrawByAgreement);
+        assert!(game.make_move_uci("e7e5").is_err());
+    }
+
+    #[test]
+    fn stalemate_detected() {
+        let game = GameState::from_fen("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1").unwrap();
+        assert_eq!(game.outcome(), GameOutcome::Stalemate);
+    }
+
+    #[test]
+    fn checkmate_winner_is_opponent_of_side_to_move() {
+        let mut game = GameState::new();
+        game.make_move_uci("f2f3").unwrap();
+        game.make_move_uci("e7e5").unwrap();
+        game.make_move_uci("g2g4").unwrap();
+        game.make_move_uci("d8h4").unwrap();
+
+        assert_eq!(game.outcome(), GameOutcome::Checkmate(PlayerColor::Black));
+    }
+
+    #[test]
+    fn from_fen_accepts_valid_positions() {
+        let positions = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+            "8/8/8/8/8/8/8/4K2k w - - 0 1",
+        ];
+
+        for fen in positions {
+            let result = GameState::from_fen(fen);
+            assert!(result.is_ok(), "Should accept valid FEN: {}", fen);
+        }
+    }
+
+    #[test]
+    fn from_fen_rejects_invalid_positions() {
+        let invalid = [
+            "invalid fen string",
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1",
+        ];
+
+        for fen in invalid {
+            let result = GameState::from_fen(fen);
+            assert!(result.is_err(), "Should reject invalid FEN: {}", fen);
+        }
+    }
+
+    #[test]
+    fn last_move_squares_returns_from_and_to() {
+        let mut game = GameState::new();
+        game.make_move_uci("e2e4").unwrap();
+
+        let squares = game.last_move_squares();
+        assert_eq!(squares, Some((Square::E2, Square::E4)));
+    }
+
+    #[test]
+    fn king_square_returns_correct_position() {
+        let game = GameState::new();
+        assert_eq!(game.king_square(PlayerColor::White), Some(Square::E1));
+        assert_eq!(game.king_square(PlayerColor::Black), Some(Square::E8));
+    }
 }
