@@ -182,14 +182,14 @@ impl AnalysisPanel {
                 Pos2::new(center_x, rect.min.y),
                 Pos2::new(center_x, rect.max.y),
             ],
-            Stroke::new(2.0, Color32::GRAY),
+            Stroke::new(2.0_f32, Color32::GRAY),
         );
 
         // Border
         painter.rect_stroke(
             rect,
             CornerRadius::same(4),
-            Stroke::new(1.0, Color32::GRAY),
+            Stroke::new(1.0_f32, Color32::GRAY),
             egui::StrokeKind::Middle,
         );
 

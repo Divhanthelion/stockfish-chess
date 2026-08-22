@@ -95,8 +95,7 @@ fn write_png(image: &ColorImage, path: &Path) -> Result<()> {
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("could not allocate {width}x{height} screenshot"))?;
     for (dst, src) in pixmap.pixels_mut().iter_mut().zip(image.pixels.iter()) {
-        *dst = tiny_skia::ColorU8::from_rgba(src.r(), src.g(), src.b(), src.a())
-            .premultiply();
+        *dst = tiny_skia::ColorU8::from_rgba(src.r(), src.g(), src.b(), src.a()).premultiply();
     }
     pixmap.save_png(path)?;
     Ok(())

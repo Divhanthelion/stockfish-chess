@@ -911,14 +911,15 @@ impl eframe::App for ChessApp {
                 self.analysis_panel.current_depth,
             );
         }
-        if self.hero.is_some() && self.engine_ready && !self.engine_analyzing {
-            if self
+        if self.hero.is_some()
+            && self.engine_ready
+            && !self.engine_analyzing
+            && self
                 .hero
                 .as_mut()
                 .is_some_and(HeroShot::should_start_analysis)
-            {
-                self.start_analysis();
-            }
+        {
+            self.start_analysis();
         }
 
         if self.engine_analyzing {

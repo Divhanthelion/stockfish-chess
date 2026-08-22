@@ -62,8 +62,14 @@ pub fn discover_stockfish() -> Result<PathBuf> {
     }
 
     bail!(
-        "Stockfish was not found. Install it, place it next to the app, \
-         or set {STOCKFISH_PATH_ENV} to the engine executable"
+        "Stockfish was not found.\n\n\
+         To fix this, you can:\n\
+         1. Install via package manager (e.g., `brew install stockfish` on macOS, \
+            `apt install stockfish` on Debian/Ubuntu)\n\
+         2. Download from stockfishchess.org and place in ~/bin or /usr/local/bin\n\
+         3. Set {STOCKFISH_PATH_ENV} to the full path of the Stockfish executable\n\n\
+         Searched locations: next to app, current directory, ~/bin, \
+         /opt/homebrew/bin, /usr/local/bin, /usr/bin, and PATH directories."
     )
 }
 
@@ -244,6 +250,118 @@ mod tests {
         let application = application.canonicalize().unwrap();
 
         assert_eq!(find_in_directory(&directory, Some(&application)), None);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn expand_home_expands_tilde() {
+        let path = PathBuf::from("~/bin/stockfish");
+        let expanded = expand_home(path);
+
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(expanded, home.join("bin/stockfish"));
+        }
+    }
+
+    #[test]
+    fn expand_home_preserves_absolute_paths() {
+        let path = PathBuf::from("/usr/local/bin/stockfish");
+        let expanded = expand_home(path.clone());
+        assert_eq!(expanded, path);
+    }
+
+    #[test]
+    fn expand_home_preserves_relative_paths() {
+        let path = PathBuf::from("./stockfish");
+        let expanded = expand_home(path.clone());
+        assert_eq!(expanded, path);
+    }
+
+    #[test]
+    fn finds_stockfish_with_various_official_names() {
+        let directory = temporary_directory();
+
+        let names = [
+            "stockfish-ubuntu-x86-64",
+            "stockfish-macos-m1-apple-silicon",
+            "stockfish-windows-x86-64.exe",
+            "Stockfish-16.1",
+        ];
+
+        for name in names {
+            let executable = directory.join(name);
+            create_executable(&executable);
+            let found = find_in_directory(&directory, None);
+            assert!(found.is_some(), "Should find {}", name);
+            fs::remove_file(&executable).unwrap();
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn does_not_find_non_stockfish_executables() {
+        let directory = temporary_directory();
+        let other = directory.join("chess-engine");
+        create_executable(&other);
+
+        assert_eq!(find_in_directory(&directory, None), None);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ignores_directories_named_stockfish() {
+        let directory = temporary_directory();
+        let stockfish_dir = directory.join("stockfish");
+        fs::create_dir_all(&stockfish_dir).unwrap();
+
+        assert_eq!(find_in_directory(&directory, None), None);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolve_configured_path_finds_in_path_env() {
+        let directory = temporary_directory();
+        let executable = directory.join("stockfish");
+        create_executable(&executable);
+
+        env::set_var("PATH", directory.to_str().unwrap());
+        let result = resolve_configured_path(Path::new("stockfish"), None);
+        assert!(result.is_some());
+        env::remove_var("PATH");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn usable_candidate_rejects_missing_file() {
+        let nonexistent = PathBuf::from("/nonexistent/stockfish");
+        assert_eq!(usable_candidate(&nonexistent, None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_usable_executable_checks_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = temporary_directory();
+
+        let no_exec = directory.join("stockfish-no-exec");
+        fs::write(&no_exec, b"engine").unwrap();
+        let mut perms = fs::metadata(&no_exec).unwrap().permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&no_exec, perms).unwrap();
+        assert!(!is_usable_executable(&no_exec));
+
+        let with_exec = directory.join("stockfish-with-exec");
+        fs::write(&with_exec, b"engine").unwrap();
+        let mut perms = fs::metadata(&with_exec).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&with_exec, perms).unwrap();
+        assert!(is_usable_executable(&with_exec));
 
         fs::remove_dir_all(directory).unwrap();
     }
