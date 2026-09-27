@@ -3,7 +3,7 @@ use crate::game::{GameOutcome, GameState, MoveRecord, PlayerColor};
 use crate::hero::HeroShot;
 use crate::study::Study;
 use crate::ui::{
-    AnalysisPanel, ChessBoard, ControlAction, ControlPanel, MoveList, PieceRenderer,
+    AnalysisPanel, ChessBoard, ControlAction, ControlPanel, GameStatus, MoveList, PieceRenderer,
     StudyNavAction, StudyPanel, Theme,
 };
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,14 @@ pub enum AppMode {
     Study,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Navigation {
+    Start,
+    Back,
+    Forward,
+    End,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppState {
@@ -107,12 +115,20 @@ pub struct ChessApp {
     analysis_panel: AnalysisPanel,
 
     draw_offer_score: Option<i32>,
+    /// One-line feedback for the last action (draw declined, PGN copied, ...).
+    status_message: Option<String>,
+    /// The game in progress, kept while the user visits Analysis or Study mode.
+    saved_game: Option<GameState>,
 
     // Study
     study: Study,
     study_panel: StudyPanel,
+    /// Study, chapter, and path the board was last rebuilt from.
+    synced_study: Option<StudyKey>,
     hero: Option<HeroShot>,
 }
+
+type StudyKey = (String, usize, Vec<usize>);
 
 impl ChessApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -158,8 +174,11 @@ impl ChessApp {
             active_engine_request: None,
             analysis_panel: AnalysisPanel::default(),
             draw_offer_score: None,
+            status_message: None,
+            saved_game: None,
             study: Study::new("Untitled Study".to_string()),
             study_panel: StudyPanel::default(),
+            synced_study: None,
             hero: None,
         };
 
@@ -278,6 +297,7 @@ impl ChessApp {
     fn make_move(&mut self, m: Move) -> Option<MoveRecord> {
         if let Ok(record) = self.game.make_move(m) {
             self.clear_selection();
+            self.status_message = None;
 
             // In study mode, add to study tree
             if self.state.mode == AppMode::Study {
@@ -285,6 +305,7 @@ impl ChessApp {
                     .current_chapter_mut()
                     .add_move(record.clone(), self.game.fen());
                 self.study.update_timestamp();
+                self.synced_study = Some(self.study_key());
             }
 
             if self.engine_analyzing {
@@ -321,9 +342,14 @@ impl ChessApp {
     fn start_engine_search(&mut self) {
         self.engine_thinking = true;
         let request_id = self.activate_engine_request(EngineRequestKind::Game);
-        let fen = self.game.fen();
-        let moves: Vec<String> = Vec::new();
+        let fen = self.game.start_fen();
+        let moves = self.game.uci_moves_to_current();
 
+        // Only the engine's own game moves are handicapped; analysis and
+        // draw evaluation switch it back to full strength.
+        let _ = self
+            .engine_cmd_tx
+            .send(EngineCommand::SetDifficulty(self.state.difficulty));
         let _ = self.engine_cmd_tx.send(EngineCommand::SetMultiPV(1));
         let _ = self.engine_cmd_tx.send(EngineCommand::Go {
             request_id,
@@ -345,11 +371,14 @@ impl ChessApp {
         // Store the base position where analysis started - all engine lines are relative to this
         self.analysis_panel.base_fen = Some(self.game.fen());
 
-        let fen = self.game.fen();
-        let moves: Vec<String> = Vec::new();
+        let fen = self.game.start_fen();
+        let moves = self.game.uci_moves_to_current();
         // Always calculate max (5) lines, just display fewer
         let max_lines = 5;
 
+        let _ = self
+            .engine_cmd_tx
+            .send(EngineCommand::SetDifficulty(DifficultyLevel::Maximum));
         let _ = self
             .engine_cmd_tx
             .send(EngineCommand::SetMultiPV(max_lines));
@@ -427,6 +456,10 @@ impl ChessApp {
                     match request.kind {
                         EngineRequestKind::Game => {
                             self.engine_thinking = false;
+                            // The search ran on the latest position; the user may
+                            // have browsed back through the history since.
+                            self.game.go_to_end();
+                            self.clear_selection();
                             if self.game.outcome() == GameOutcome::InProgress {
                                 if let Err(error) = self.game.make_move_uci(&best_move) {
                                     tracing::error!("Failed to apply engine move: {error}");
@@ -444,11 +477,16 @@ impl ChessApp {
                                 let accept_draw = should_accept_draw(self.draw_offer_score);
                                 if accept_draw {
                                     self.game.agree_to_draw();
+                                    self.status_message =
+                                        Some("Stockfish accepted your draw offer.".to_string());
                                     tracing::info!(
                                         "Draw accepted at engine-relative score {:?} cp",
                                         self.draw_offer_score
                                     );
                                 } else {
+                                    self.status_message = Some(
+                                        "Stockfish declined your draw offer. Play on!".to_string(),
+                                    );
                                     tracing::info!(
                                         "Draw declined at engine-relative score {:?} cp",
                                         self.draw_offer_score
@@ -557,6 +595,7 @@ impl ChessApp {
         self.cancel_active_engine_search();
         self.game.reset();
         self.clear_selection();
+        self.status_message = None;
 
         let _ = self.engine_cmd_tx.send(EngineCommand::NewGame);
 
@@ -587,6 +626,8 @@ impl ChessApp {
             }
             ControlAction::SetPlayerColor(color) => {
                 self.state.player_color = color;
+                // Put the player's pieces at the bottom of the board.
+                self.state.flipped = color == PlayerColor::Black;
                 self.new_game();
             }
             ControlAction::Resign => {
@@ -605,17 +646,20 @@ impl ChessApp {
 
     fn check_draw_offer(&mut self) {
         if self.engine_ready && !self.engine_thinking && !self.engine_analyzing {
-            let fen = self.game.fen();
             self.engine_thinking = true;
             self.draw_offer_score = None;
+            self.status_message = None;
             let request_id = self.activate_engine_request(EngineRequestKind::DrawOffer);
 
-            // Request a quick evaluation
+            // Request a quick, full-strength evaluation
+            let _ = self
+                .engine_cmd_tx
+                .send(EngineCommand::SetDifficulty(DifficultyLevel::Maximum));
             let _ = self.engine_cmd_tx.send(EngineCommand::SetMultiPV(1));
             let _ = self.engine_cmd_tx.send(EngineCommand::Go {
                 request_id,
-                fen,
-                moves: Vec::new(),
+                fen: self.game.start_fen(),
+                moves: self.game.uci_moves_to_current(),
                 movetime_ms: Some(500), // 500ms quick eval
             });
         }
@@ -639,140 +683,157 @@ impl ChessApp {
     }
 
     fn undo_last_moves(&mut self) {
-        // Undo the last two moves (player's move and engine's response)
-        // First, if engine is thinking, stop it
-        if self.active_engine_request.is_some() {
-            self.cancel_active_engine_search();
-        }
+        // Stop any search first so a stale engine move can't land afterwards.
+        self.cancel_active_engine_search();
 
-        // Undo moves until it's the player's turn again
-        let target_turn = self.state.player_color;
-        let mut undone = 0;
+        let undone = self.game.take_back_to(self.state.player_color);
+        self.clear_selection();
+        self.status_message = None;
+        tracing::info!("Undid {} moves", undone);
 
-        while self.game.turn() != target_turn && self.game.can_go_back() {
-            if self.game.go_back().is_ok() {
-                undone += 1;
-            } else {
+        // Playing Black, undoing the engine's first move hands it the move again.
+        self.check_engine_turn();
+    }
+
+    fn study_key(&self) -> StudyKey {
+        (
+            self.study.id.clone(),
+            self.study.current_chapter,
+            self.study.current_chapter().current_path.clone(),
+        )
+    }
+
+    /// Rebuild the board by replaying the study chapter's current path, so the
+    /// move list, navigation, and engine history all follow the study tree.
+    fn sync_game_to_study(&mut self) {
+        let chapter = self.study.current_chapter();
+        let mut game = match GameState::from_fen(&chapter.root.fen) {
+            Ok(game) => game,
+            Err(error) => {
+                tracing::error!("Invalid study start position: {error}");
+                return;
+            }
+        };
+
+        let mut node = &chapter.root;
+        for &idx in &chapter.current_path {
+            let Some(child) = node.children.get(idx) else {
+                break;
+            };
+            let Some(record) = &child.move_record else {
+                break;
+            };
+            if let Err(error) = game.make_move_uci(&record.uci) {
+                tracing::error!("Could not replay study move {}: {error}", record.san);
                 break;
             }
+            node = child;
         }
 
-        // Also remove the moves from history if we're at the end
-        if !self.game.can_go_forward() && undone > 0 {
-            // Truncate history
-            for _ in 0..undone {
-                self.game.undo_last_move();
-            }
-        }
-
+        self.game = game;
         self.clear_selection();
-        tracing::info!("Undid {} moves", undone);
+        self.synced_study = Some(self.study_key());
+        self.restart_analysis();
     }
 
     fn handle_study_nav_action(&mut self, action: StudyNavAction) {
         match action {
             StudyNavAction::GoToPosition(path) => {
-                // Navigate study chapter to the specified path
-                let chapter = self.study.current_chapter_mut();
-                chapter.current_path = path.clone();
-
-                // Update the game to match the new position
-                let fen = chapter.current_fen().to_string();
-                if let Ok(new_game) = GameState::from_fen(&fen) {
-                    self.game = new_game;
-                    self.clear_selection();
-                    tracing::info!("Navigated to study position: {:?}", path);
-                }
-
-                // Restart analysis if active
-                if self.engine_analyzing {
-                    self.restart_analysis();
-                }
+                tracing::info!("Navigating to study position: {:?}", path);
+                self.study.current_chapter_mut().current_path = path;
+                self.sync_game_to_study();
             }
         }
     }
 
-    fn go_to_previous_position(&mut self) {
-        if self.game.can_go_back() {
-            self.clear_selection();
-            let _ = self.game.go_back();
-
-            if self.state.mode == AppMode::Study {
-                self.study.current_chapter_mut().go_back();
-            }
-
-            if self.engine_analyzing {
-                self.restart_analysis();
-            }
-        }
-    }
-
-    fn go_to_next_position(&mut self) {
-        if self.game.can_go_forward() {
-            self.clear_selection();
-            let _ = self.game.go_forward();
-
-            if self.state.mode == AppMode::Study {
-                // In study mode, try to follow the main line
-                self.study.current_chapter_mut().go_to_child(0);
-            }
-
-            if self.engine_analyzing {
-                self.restart_analysis();
-            }
-        }
-    }
-
-    fn go_to_start(&mut self) {
-        self.clear_selection();
-        self.game.go_to_start();
-
+    /// Browse the game history, or the study tree in Study mode.
+    fn navigate(&mut self, step: Navigation) {
         if self.state.mode == AppMode::Study {
-            self.study.current_chapter_mut().go_to_start();
+            let chapter = self.study.current_chapter_mut();
+            match step {
+                Navigation::Start => chapter.go_to_start(),
+                Navigation::Back => {
+                    chapter.go_back();
+                }
+                // Forward follows the main line (first variation).
+                Navigation::Forward => {
+                    chapter.go_to_child(0);
+                }
+                Navigation::End => while chapter.go_to_child(0) {},
+            }
+            if self.synced_study.as_ref() != Some(&self.study_key()) {
+                self.sync_game_to_study();
+            }
+            return;
         }
 
-        if self.engine_analyzing {
+        let before = self.game.current_index();
+        match step {
+            Navigation::Start => self.game.go_to_start(),
+            Navigation::Back => {
+                let _ = self.game.go_back();
+            }
+            Navigation::Forward => {
+                let _ = self.game.go_forward();
+            }
+            Navigation::End => self.game.go_to_end(),
+        }
+        if self.game.current_index() != before {
+            self.clear_selection();
             self.restart_analysis();
         }
     }
 
-    fn go_to_end(&mut self) {
-        self.clear_selection();
-        self.game.go_to_end();
-
-        if self.state.mode == AppMode::Study {
-            // Go to end of main line
-            while self.study.current_chapter().can_go_forward(0) {
-                self.study.current_chapter_mut().go_to_child(0);
-            }
+    fn handle_navigation_keys(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() || self.pending_promotion.is_some() {
+            return;
         }
-
-        if self.engine_analyzing {
-            self.restart_analysis();
+        let step = ctx.input(|input| {
+            if input.key_pressed(egui::Key::ArrowLeft) {
+                Some(Navigation::Back)
+            } else if input.key_pressed(egui::Key::ArrowRight) {
+                Some(Navigation::Forward)
+            } else if input.key_pressed(egui::Key::Home) {
+                Some(Navigation::Start)
+            } else if input.key_pressed(egui::Key::End) {
+                Some(Navigation::End)
+            } else {
+                None
+            }
+        });
+        if let Some(step) = step {
+            self.navigate(step);
         }
     }
 
     fn set_mode(&mut self, mode: AppMode) {
-        if self.state.mode != mode {
-            self.state.mode = mode;
+        if self.state.mode == mode {
+            return;
+        }
 
-            self.cancel_active_engine_search();
+        let previous = self.state.mode;
+        self.cancel_active_engine_search();
+        self.state.mode = mode;
+        self.status_message = None;
 
-            match mode {
-                AppMode::Game => {
-                    self.new_game();
+        // Keep the game in progress so peeking at Analysis or Study doesn't lose it.
+        if previous == AppMode::Game {
+            self.saved_game = Some(self.game.clone());
+        }
+
+        match mode {
+            AppMode::Game => match self.saved_game.take() {
+                Some(game) => {
+                    self.game = game;
+                    self.clear_selection();
+                    self.check_engine_turn();
                 }
-                AppMode::Analysis => {
-                    // Keep current position
-                }
-                AppMode::Study => {
-                    // Sync game with study position
-                    let fen = self.study.current_chapter().current_fen().to_string();
-                    if let Ok(new_game) = GameState::from_fen(&fen) {
-                        self.game = new_game;
-                    }
-                }
+                None => self.new_game(),
+            },
+            AppMode::Analysis => {
+                // Keep current position
             }
+            AppMode::Study => self.sync_game_to_study(),
         }
     }
 
@@ -781,44 +842,32 @@ impl ChessApp {
     fn apply_engine_move(&mut self, uci_move: &str) -> bool {
         use shakmaty::uci::UciMove;
 
-        // Parse the UCI move
-        if let Ok(uci) = uci_move.parse::<UciMove>() {
-            // Convert to Move
-            if let Ok(m) = uci.to_move(self.game.current_position()) {
-                // Check if move is legal
-                if self.game.legal_moves().contains(&m) {
-                    // Apply the move
-                    if let Some(record) = self.make_move(m) {
-                        // In Analysis mode, this creates a variation/fork
-                        tracing::info!("Applied engine move: {} (fork)", record.san);
-                        return true;
-                    }
-                }
+        let Ok(uci) = uci_move.parse::<UciMove>() else {
+            return false;
+        };
+        let Ok(m) = uci.to_move(self.game.current_position()) else {
+            return false;
+        };
+        match self.make_move(m) {
+            Some(record) => {
+                tracing::info!("Applied engine move: {} (fork)", record.san);
+                true
             }
+            None => false,
         }
-        false
     }
 
     fn apply_engine_path(&mut self, base_fen: &str, path: Vec<String>) {
+        // Lines are cleared whenever analysis restarts, so a mismatch means the
+        // click raced a position change; the moves wouldn't fit this board.
+        if base_fen != self.game.fen() {
+            tracing::debug!("Ignoring analysis line for a different position");
+            return;
+        }
+
         let restart_analysis = self.engine_analyzing;
         if restart_analysis {
             self.stop_analysis();
-        }
-
-        if !base_fen.is_empty() {
-            match GameState::from_fen(base_fen) {
-                Ok(new_game) => {
-                    self.game = new_game;
-                    tracing::info!("Reset to base position for analysis line");
-                }
-                Err(error) => {
-                    tracing::error!("Invalid analysis base position: {error}");
-                    if restart_analysis {
-                        self.start_analysis();
-                    }
-                    return;
-                }
-            }
         }
 
         tracing::info!("Playing engine path: {:?}", path);
@@ -844,8 +893,13 @@ impl ChessApp {
         pgn.push_str("[Site \"Local\"]\n");
         pgn.push_str(&format!("[Date \"{}\"]\n", Local::now().format("%Y.%m.%d")));
         pgn.push_str("[Round \"-\"]\n");
-        pgn.push_str("[White \"Player\"]\n");
-        pgn.push_str("[Black \"Stockfish\"]\n");
+        let engine = format!("Stockfish ({})", self.state.difficulty.label());
+        let (white, black) = match self.state.player_color {
+            PlayerColor::White => ("Player", engine.as_str()),
+            PlayerColor::Black => (engine.as_str(), "Player"),
+        };
+        pgn.push_str(&format!("[White \"{white}\"]\n"));
+        pgn.push_str(&format!("[Black \"{black}\"]\n"));
 
         // Result
         let result = match self.game.outcome() {
@@ -895,7 +949,7 @@ impl ChessApp {
         }
 
         self.study = new_study;
-        self.state.mode = AppMode::Study;
+        self.set_mode(AppMode::Study);
         tracing::info!("Game saved to new study");
     }
 }
@@ -903,6 +957,7 @@ impl ChessApp {
 impl eframe::App for ChessApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_engine_events(ctx);
+        self.handle_navigation_keys(ctx);
 
         if let Some(hero) = self.hero.as_mut() {
             hero.tick(
@@ -911,14 +966,14 @@ impl eframe::App for ChessApp {
                 self.analysis_panel.current_depth,
             );
         }
-        if self.hero.is_some() && self.engine_ready && !self.engine_analyzing {
-            if self
+        if self.engine_ready
+            && !self.engine_analyzing
+            && self
                 .hero
                 .as_mut()
                 .is_some_and(HeroShot::should_start_analysis)
-            {
-                self.start_analysis();
-            }
+        {
+            self.start_analysis();
         }
 
         if self.engine_analyzing {
@@ -964,17 +1019,17 @@ impl eframe::App for ChessApp {
                 {
                     ui.label("Navigation:");
                     ui.horizontal(|ui| {
-                        if ui.button("⏮").on_hover_text("Go to start").clicked() {
-                            self.go_to_start();
+                        if ui.button("⏮").on_hover_text("Go to start (Home)").clicked() {
+                            self.navigate(Navigation::Start);
                         }
-                        if ui.button("◀").on_hover_text("Previous move").clicked() {
-                            self.go_to_previous_position();
+                        if ui.button("◀").on_hover_text("Previous move (←)").clicked() {
+                            self.navigate(Navigation::Back);
                         }
-                        if ui.button("▶").on_hover_text("Next move").clicked() {
-                            self.go_to_next_position();
+                        if ui.button("▶").on_hover_text("Next move (→)").clicked() {
+                            self.navigate(Navigation::Forward);
                         }
-                        if ui.button("⏭").on_hover_text("Go to end").clicked() {
-                            self.go_to_end();
+                        if ui.button("⏭").on_hover_text("Go to end (End)").clicked() {
+                            self.navigate(Navigation::End);
                         }
                     });
 
@@ -1019,17 +1074,26 @@ impl eframe::App for ChessApp {
                             if let Some(nav_action) = self.study_panel.show(ui, &mut self.study) {
                                 self.handle_study_nav_action(nav_action);
                             }
+                            // New, loaded, or switched chapters change the position too.
+                            if self.synced_study.as_ref() != Some(&self.study_key()) {
+                                self.sync_game_to_study();
+                            }
                         }
                     }
                     AppMode::Game => {
+                        let status = GameStatus {
+                            outcome: self.game.outcome(),
+                            engine_thinking: self.engine_thinking,
+                            engine_ready: self.engine_ready,
+                            can_undo: !self.game.move_history().is_empty(),
+                            message: self.status_message.as_deref(),
+                        };
                         if let Some(action) = ControlPanel::show(
                             ui,
                             &mut self.state.difficulty,
                             &mut self.state.theme,
-                            &mut self.state.player_color,
-                            self.game.outcome(),
-                            self.engine_thinking,
-                            self.engine_ready,
+                            self.state.player_color,
+                            &status,
                         ) {
                             self.handle_control_action(action);
                         }
@@ -1040,6 +1104,7 @@ impl eframe::App for ChessApp {
                             if ui.button("📄 Export PGN").clicked() {
                                 let pgn = self.export_game_pgn();
                                 ui.ctx().copy_text(pgn);
+                                self.status_message = Some("PGN copied to clipboard.".to_string());
                             }
                             if ui.button("📚 Save to Study").clicked() {
                                 self.save_game_to_study();
@@ -1084,7 +1149,9 @@ impl eframe::App for ChessApp {
             };
 
             if can_interact {
-                if response.move_candidates.is_empty() {
+                if let Some(square) = response.drag_started {
+                    self.select_square(square);
+                } else if response.move_candidates.is_empty() {
                     if let Some(square) = response.square_clicked {
                         self.select_square(square);
                     }

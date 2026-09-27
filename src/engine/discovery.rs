@@ -103,7 +103,7 @@ fn find_in_directory(directory: &Path, excluded: Option<&Path>) -> Option<PathBu
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.to_ascii_lowercase().starts_with("stockfish"))
+                .is_some_and(is_engine_download_name)
                 && usable_candidate(path, excluded).is_some()
         })
         .collect::<Vec<_>>();
@@ -112,6 +112,29 @@ fn find_in_directory(directory: &Path, excluded: Option<&Path>) -> Option<PathBu
     downloaded_binaries
         .first()
         .map(|path| canonical_or_original(path))
+}
+
+/// Whether a filename looks like an official Stockfish download such as
+/// `stockfish-windows-x86-64-avx2.exe`.
+///
+/// This app's own build outputs (`stockfish-chess.d`, `stockfish_chess.pdb`)
+/// share the prefix and sit next to the executable. Unix rejects them for
+/// lacking the executable bit, but Windows has no such bit, so the extension
+/// and app name are checked explicitly.
+fn is_engine_download_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if !name.starts_with("stockfish")
+        || name.starts_with("stockfish-chess")
+        || name.starts_with("stockfish_chess")
+    {
+        return false;
+    }
+
+    if cfg!(target_os = "windows") {
+        name.ends_with(".exe")
+    } else {
+        true
+    }
 }
 
 fn usable_candidate(path: &Path, excluded: Option<&Path>) -> Option<PathBuf> {
@@ -195,10 +218,18 @@ mod tests {
         }
     }
 
+    fn official_download_name() -> &'static str {
+        if cfg!(target_os = "windows") {
+            "stockfish-windows-x86-64-avx2.exe"
+        } else {
+            "stockfish-macos-m1-apple-silicon"
+        }
+    }
+
     #[test]
     fn finds_official_download_name() {
         let directory = temporary_directory();
-        let executable = directory.join("stockfish-macos-arm64");
+        let executable = directory.join(official_download_name());
         create_executable(&executable);
 
         assert_eq!(
@@ -244,6 +275,29 @@ mod tests {
         let application = application.canonicalize().unwrap();
 
         assert_eq!(find_in_directory(&directory, Some(&application)), None);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ignores_this_apps_build_outputs() {
+        let directory = temporary_directory();
+        for name in [
+            "stockfish-chess.d",
+            "stockfish-chess.exe",
+            "stockfish_chess.pdb",
+        ] {
+            create_executable(&directory.join(name));
+        }
+
+        assert_eq!(find_in_directory(&directory, None), None);
+
+        let engine = directory.join(official_download_name());
+        create_executable(&engine);
+        assert_eq!(
+            find_in_directory(&directory, None),
+            Some(engine.canonicalize().unwrap())
+        );
 
         fs::remove_dir_all(directory).unwrap();
     }

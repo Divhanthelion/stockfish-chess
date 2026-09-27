@@ -79,6 +79,7 @@ struct PositionState {
     hash: u64,
 }
 
+#[derive(Clone)]
 pub struct GameState {
     /// All positions in the game, index 0 is starting position
     positions: Vec<PositionState>,
@@ -156,6 +157,22 @@ impl GameState {
 
     pub fn fen(&self) -> String {
         Fen::from_position(self.current_position(), EnPassantMode::Legal).to_string()
+    }
+
+    /// FEN of the position the game started from.
+    pub fn start_fen(&self) -> String {
+        Fen::from_position(&self.positions[0].position, EnPassantMode::Legal).to_string()
+    }
+
+    /// UCI moves from the start position up to the position being viewed.
+    ///
+    /// Sending these alongside [`Self::start_fen`] lets the engine see the
+    /// game history, which it needs to recognize repetitions.
+    pub fn uci_moves_to_current(&self) -> Vec<String> {
+        self.move_history[..self.current_index]
+            .iter()
+            .map(|record| record.uci.clone())
+            .collect()
     }
 
     pub fn turn(&self) -> PlayerColor {
@@ -369,6 +386,21 @@ impl GameState {
         true
     }
 
+    /// Take back moves from the end of the game until it is `color`'s turn
+    /// again, so undoing against the engine also removes its reply. Returns
+    /// the number of moves removed.
+    pub fn take_back_to(&mut self, color: PlayerColor) -> usize {
+        self.go_to_end();
+        let mut undone = 0;
+        while self.undo_last_move() {
+            undone += 1;
+            if self.turn() == color {
+                break;
+            }
+        }
+        undone
+    }
+
     pub fn reset(&mut self) {
         *self = Self::new();
     }
@@ -457,6 +489,56 @@ mod tests {
         game.make_move_uci("h5f7").unwrap();
 
         assert_eq!(game.outcome(), GameOutcome::Checkmate(PlayerColor::White));
+    }
+
+    #[test]
+    fn take_back_removes_the_engine_reply_too() {
+        let mut game = GameState::new();
+        for uci in ["e2e4", "e7e5", "g1f3", "b8c6"] {
+            game.make_move_uci(uci).unwrap();
+        }
+
+        assert_eq!(game.take_back_to(PlayerColor::White), 2);
+        assert_eq!(game.uci_moves_to_current(), ["e2e4", "e7e5"]);
+        assert_eq!(game.turn(), PlayerColor::White);
+    }
+
+    #[test]
+    fn take_back_while_engine_to_move_removes_one_move() {
+        let mut game = GameState::new();
+        for uci in ["e2e4", "e7e5", "g1f3"] {
+            game.make_move_uci(uci).unwrap();
+        }
+
+        assert_eq!(game.take_back_to(PlayerColor::White), 1);
+        assert_eq!(game.turn(), PlayerColor::White);
+        assert_eq!(game.move_history().len(), 2);
+    }
+
+    #[test]
+    fn take_back_works_from_a_browsed_position_and_after_checkmate() {
+        let mut game = GameState::new();
+        for uci in ["f2f3", "e7e5", "g2g4", "d8h4"] {
+            game.make_move_uci(uci).unwrap();
+        }
+        assert_eq!(game.outcome(), GameOutcome::Checkmate(PlayerColor::Black));
+        game.go_to_start();
+
+        assert_eq!(game.take_back_to(PlayerColor::White), 2);
+        assert_eq!(game.outcome(), GameOutcome::InProgress);
+        assert_eq!(game.uci_moves_to_current(), ["f2f3", "e7e5"]);
+    }
+
+    #[test]
+    fn engine_history_stops_at_the_viewed_position() {
+        let mut game = GameState::new();
+        for uci in ["e2e4", "e7e5", "g1f3"] {
+            game.make_move_uci(uci).unwrap();
+        }
+        game.go_back().unwrap();
+
+        assert_eq!(game.start_fen(), GameState::new().fen());
+        assert_eq!(game.uci_moves_to_current(), ["e2e4", "e7e5"]);
     }
 
     #[test]

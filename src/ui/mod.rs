@@ -8,7 +8,7 @@ mod theme;
 
 pub use analysis::AnalysisPanel;
 pub use board::ChessBoard;
-pub use controls::{ControlAction, ControlPanel};
+pub use controls::{ControlAction, ControlPanel, GameStatus};
 pub use move_list::MoveList;
 pub use pieces::PieceRenderer;
 pub use study_panel::{StudyNavAction, StudyPanel};

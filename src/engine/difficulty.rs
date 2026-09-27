@@ -37,45 +37,64 @@ impl DifficultyLevel {
         }
     }
 
-    /// Returns the UCI commands needed to configure Stockfish for this difficulty
+    /// Returns the UCI commands needed to configure Stockfish for this difficulty.
+    ///
+    /// Every level sets `Skill Level` explicitly because engine options persist:
+    /// Novice lowers it, which would otherwise keep crippling a stronger level
+    /// chosen later.
     pub fn uci_commands(&self) -> Vec<String> {
-        match self {
-            DifficultyLevel::Novice => {
-                // UCI_Elo minimum is 1320, so we use Skill Level for very weak play
-                vec![
-                    "setoption name UCI_LimitStrength value false".to_string(),
-                    "setoption name Skill Level value 0".to_string(),
-                ]
-            }
-            DifficultyLevel::Beginner => vec![
-                "setoption name UCI_LimitStrength value true".to_string(),
-                "setoption name UCI_Elo value 1350".to_string(),
-            ],
-            DifficultyLevel::Casual => vec![
-                "setoption name UCI_LimitStrength value true".to_string(),
-                "setoption name UCI_Elo value 1500".to_string(),
-            ],
-            DifficultyLevel::Intermediate => vec![
-                "setoption name UCI_LimitStrength value true".to_string(),
-                "setoption name UCI_Elo value 1800".to_string(),
-            ],
-            DifficultyLevel::Advanced => vec![
-                "setoption name UCI_LimitStrength value true".to_string(),
-                "setoption name UCI_Elo value 2100".to_string(),
-            ],
-            DifficultyLevel::Expert => vec![
-                "setoption name UCI_LimitStrength value true".to_string(),
-                "setoption name UCI_Elo value 2500".to_string(),
-            ],
-            DifficultyLevel::Maximum => {
-                vec!["setoption name UCI_LimitStrength value false".to_string()]
-            }
+        let (limit_strength, elo, skill_level) = match self {
+            // UCI_Elo minimum is 1320, so we use Skill Level for very weak play
+            DifficultyLevel::Novice => (false, None, 0),
+            DifficultyLevel::Beginner => (true, Some(1350), 20),
+            DifficultyLevel::Casual => (true, Some(1500), 20),
+            DifficultyLevel::Intermediate => (true, Some(1800), 20),
+            DifficultyLevel::Advanced => (true, Some(2100), 20),
+            DifficultyLevel::Expert => (true, Some(2500), 20),
+            DifficultyLevel::Maximum => (false, None, 20),
+        };
+
+        let mut commands = vec![
+            format!("setoption name UCI_LimitStrength value {limit_strength}"),
+            format!("setoption name Skill Level value {skill_level}"),
+        ];
+        if let Some(elo) = elo {
+            commands.push(format!("setoption name UCI_Elo value {elo}"));
         }
+        commands
     }
 }
 
 impl std::fmt::Display for DifficultyLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.label())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stronger_levels_restore_full_skill_after_novice() {
+        for level in DifficultyLevel::all() {
+            let commands = level.uci_commands();
+            let expected_skill = if *level == DifficultyLevel::Novice {
+                "setoption name Skill Level value 0"
+            } else {
+                "setoption name Skill Level value 20"
+            };
+            assert!(
+                commands.iter().any(|command| command == expected_skill),
+                "{level:?} should send `{expected_skill}`, got {commands:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn maximum_strength_is_unlimited() {
+        let commands = DifficultyLevel::Maximum.uci_commands();
+        assert!(commands.contains(&"setoption name UCI_LimitStrength value false".to_string()));
+        assert!(!commands.iter().any(|command| command.contains("UCI_Elo")));
     }
 }

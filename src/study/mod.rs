@@ -175,11 +175,6 @@ impl StudyChapter {
         current.comments.push(comment);
     }
 
-    /// Get current FEN
-    pub fn current_fen(&self) -> &str {
-        &self.current_node().fen
-    }
-
     /// Get the main line (longest variation)
     pub fn get_main_line(&self) -> Vec<String> {
         self.root
@@ -192,11 +187,6 @@ impl StudyChapter {
     /// Go to start
     pub fn go_to_start(&mut self) {
         self.current_path.clear();
-    }
-
-    /// Check if we can go forward to a specific child
-    pub fn can_go_forward(&self, child_idx: usize) -> bool {
-        child_idx < self.current_node().children.len()
     }
 }
 
@@ -260,7 +250,14 @@ impl Study {
 
         pgn.push_str(&format!("[Event \"{}\"]\n", self.name));
         pgn.push_str("[Site \"Stockfish Chess\"]\n");
-        pgn.push_str(&format!("[Date \"{}\"]\n", &self.created_at[..10]));
+        // PGN dates use dots: 2024.01.31
+        pgn.push_str(&format!(
+            "[Date \"{}\"]\n",
+            self.created_at
+                .get(..10)
+                .unwrap_or("????-??-??")
+                .replace('-', ".")
+        ));
 
         for chapter in &self.chapters {
             pgn.push('\n');

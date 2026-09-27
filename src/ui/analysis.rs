@@ -1,4 +1,40 @@
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke, Ui, Vec2};
+use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, Position};
+
+/// Label each principal-variation move in SAN with move numbers, e.g.
+/// `["12. Nf3", "Nc6"]`, or `["12... Nc6"]` when Black moves first. Moves that
+/// don't fit the position fall back to their UCI text.
+fn pv_labels(base_fen: Option<&str>, pv: &[String]) -> Vec<String> {
+    let mut position: Option<Chess> = base_fen
+        .and_then(|fen| fen.parse::<Fen>().ok())
+        .and_then(|fen| fen.into_position(CastlingMode::Standard).ok());
+
+    pv.iter()
+        .enumerate()
+        .map(|(i, uci)| {
+            let Some(mut pos) = position.take() else {
+                return uci.clone();
+            };
+            let Some(m) = uci
+                .parse::<UciMove>()
+                .ok()
+                .and_then(|uci| uci.to_move(&pos).ok())
+            else {
+                return uci.clone();
+            };
+
+            let number = pos.fullmoves();
+            let prefix = match pos.turn() {
+                Color::White => format!("{number}. "),
+                Color::Black if i == 0 => format!("{number}... "),
+                Color::Black => String::new(),
+            };
+            let san = SanPlus::from_move_and_play_unchecked(&mut pos, m);
+            position = Some(pos);
+            format!("{prefix}{san}")
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct EngineLine {
@@ -182,24 +218,37 @@ impl AnalysisPanel {
                 Pos2::new(center_x, rect.min.y),
                 Pos2::new(center_x, rect.max.y),
             ],
-            Stroke::new(2.0, Color32::GRAY),
+            Stroke::new(2.0_f32, Color32::GRAY),
         );
 
         // Border
         painter.rect_stroke(
             rect,
             CornerRadius::same(4),
-            Stroke::new(1.0, Color32::GRAY),
+            Stroke::new(1.0_f32, Color32::GRAY),
             egui::StrokeKind::Middle,
         );
 
-        // Score text
+        // Score text, inside the leading side's end of the bar so the
+        // white/black boundary never cuts through it
         if rect.width() > 50.0 && rect.height() > 10.0 {
             let score_text = line.format_score();
-            let text_color = Color32::WHITE;
+            let (anchor, align, text_color) = if score >= 0.0 {
+                (
+                    rect.left_center() + Vec2::new(6.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    Color32::BLACK,
+                )
+            } else {
+                (
+                    rect.right_center() - Vec2::new(6.0, 0.0),
+                    egui::Align2::RIGHT_CENTER,
+                    Color32::WHITE,
+                )
+            };
             let _ = painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
+                anchor,
+                align,
                 score_text,
                 egui::FontId::proportional(12.0),
                 text_color,
@@ -228,9 +277,10 @@ impl AnalysisPanel {
 
             // PV moves as clickable hyperlinks (ALL of them)
             if !line.pv.is_empty() {
-                for (i, mv) in line.pv.iter().enumerate() {
+                let labels = pv_labels(self.base_fen.as_deref(), &line.pv);
+                for (i, label) in labels.iter().enumerate() {
                     // All moves are clickable - use Button for proper pointer cursor
-                    let text = egui::RichText::new(mv)
+                    let text = egui::RichText::new(label)
                         .color(ui.visuals().hyperlink_color)
                         .underline();
 
@@ -308,6 +358,38 @@ impl AnalysisPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn moves(uci: &[&str]) -> Vec<String> {
+        uci.iter().map(|m| m.to_string()).collect()
+    }
+
+    #[test]
+    fn labels_pv_in_san_with_move_numbers() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(
+            pv_labels(Some(start), &moves(&["e2e4", "e7e5", "g1f3"])),
+            ["1. e4", "e5", "2. Nf3"]
+        );
+    }
+
+    #[test]
+    fn labels_black_first_move_with_ellipsis() {
+        let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        assert_eq!(
+            pv_labels(Some(after_e4), &moves(&["e7e5", "d1h5"])),
+            ["1... e5", "2. Qh5"]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_uci_for_moves_that_do_not_fit() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(
+            pv_labels(Some(start), &moves(&["e2e4", "e2e4"])),
+            ["1. e4", "e2e4"]
+        );
+        assert_eq!(pv_labels(None, &moves(&["e2e4"])), ["e2e4"]);
+    }
 
     #[test]
     fn preserves_stockfish_multipv_order() {

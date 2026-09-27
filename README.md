@@ -17,9 +17,10 @@ you install yourself.
 
 - Play either color against Stockfish with seven difficulty levels
 - Game, multi-line analysis, and study modes
-- Legal move, last move, and check highlighting
+- Click-to-move or drag-and-drop, with legal move, last move, and check highlighting
 - Queen, rook, bishop, and knight promotion selection
-- Move history, undo, board flipping, and persistent preferences
+- Move history with arrow-key browsing, undo, board flipping, and persistent preferences
+- Analysis lines in standard notation (`6. Re1 b5 7. Bb3`) that you can click to play
 - Four board themes: Classic, Lichess, Chess.com, and Dark
 - Study chapters, comments, variations, JSON persistence, and PGN export
 - User-visible engine startup and runtime errors
@@ -28,7 +29,7 @@ you install yourself.
 
 ### Rust
 
-Install Rust 1.75 or newer:
+Install Rust 1.88 or newer:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -91,6 +92,12 @@ To point at a custom location:
 STOCKFISH_PATH="/path/to/stockfish" stockfish-chess
 ```
 
+On Windows (PowerShell), use the `.exe` from the official zip:
+
+```powershell
+$env:STOCKFISH_PATH = "C:\path\to\stockfish-windows-x86-64-universal.exe"; stockfish-chess
+```
+
 On macOS, a browser download may need executable permission and quarantine
 removal:
 
@@ -135,21 +142,30 @@ RUST_LOG=info cargo run --locked
 
 ## Playing
 
-1. Choose White or Black under **Play as**.
-2. Select a piece to display its legal destinations.
-3. Select a destination to move.
-4. When a pawn reaches the back rank, choose its promotion piece.
-5. Stockfish responds automatically on its turn.
+1. Choose White or Black under **Play as**. The board turns so your pieces are
+   at the bottom.
+2. Click a piece to show its legal destinations, then click a destination, or
+   drag the piece there.
+3. When a pawn reaches the back rank, choose its promotion piece.
+4. Stockfish responds automatically on its turn.
 
-Draw offers are evaluated from Stockfish's perspective. Stockfish accepts when
-it does not evaluate its own advantage above 0.50 pawns.
+**Undo** takes back your last move and Stockfish's reply, and stays available
+after the game ends so you can retry a lost position. Use ←/→ (or Home/End) to
+browse earlier positions.
+
+Draw offers are evaluated at full strength from Stockfish's perspective.
+Stockfish accepts when it does not evaluate its own advantage above 0.50 pawns,
+and the sidebar tells you whether it accepted.
+
+Switching to Analysis or Study keeps your game; switch back to Game to resume
+it.
 
 ## Modes
 
 - **Game** — play against Stockfish, adjust difficulty, resign, offer a draw,
   undo moves, and export completed games.
-- **Analysis** — run continuous five-line Stockfish analysis and play moves
-  from principal variations.
+- **Analysis** — run continuous five-line, full-strength Stockfish analysis and
+  play moves from principal variations.
 - **Study** — organize positions into chapters and variations, add comments,
   save studies locally, and export PGN.
 
@@ -201,9 +217,16 @@ cargo clippy --all-targets -- -D warnings
 cargo test --locked
 ```
 
-Tests cover game state, promotion choices, UCI command construction and
-parsing, engine discovery, score orientation, draw acceptance, and engine
-timeouts.
+Tests cover game state, undo, promotion choices, UCI command construction and
+parsing, difficulty options, engine discovery, board hit-testing, analysis
+notation, score orientation, draw acceptance, and engine timeouts.
+
+One test plays a short game against a real Stockfish and is skipped by default.
+With Stockfish on `PATH` or in `STOCKFISH_PATH`:
+
+```bash
+cargo test --locked -- --ignored
+```
 
 ## Troubleshooting
 

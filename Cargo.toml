@@ -2,7 +2,7 @@
 name = "stockfish-chess"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75.0"
+rust-version = "1.88"
 description = "Desktop chess GUI with Stockfish UCI engine integration"
 license = "MIT"
 

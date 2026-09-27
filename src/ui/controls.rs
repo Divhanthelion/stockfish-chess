@@ -5,6 +5,16 @@ use egui::Ui;
 
 pub struct ControlPanel;
 
+/// Game and engine state the control panel displays.
+pub struct GameStatus<'a> {
+    pub outcome: GameOutcome,
+    pub engine_thinking: bool,
+    pub engine_ready: bool,
+    pub can_undo: bool,
+    /// Feedback for the player's last action, such as a declined draw offer.
+    pub message: Option<&'a str>,
+}
+
 #[derive(Debug, Clone)]
 pub enum ControlAction {
     NewGame,
@@ -22,12 +32,11 @@ impl ControlPanel {
         ui: &mut Ui,
         difficulty: &mut DifficultyLevel,
         theme: &mut Theme,
-        player_color: &mut PlayerColor,
-        outcome: GameOutcome,
-        is_engine_thinking: bool,
-        is_engine_ready: bool,
+        player_color: PlayerColor,
+        status: &GameStatus,
     ) -> Option<ControlAction> {
         let mut action = None;
+        let outcome = status.outcome;
 
         ui.vertical(|ui| {
             ui.heading("Stockfish Chess");
@@ -36,7 +45,9 @@ impl ControlPanel {
             // Game status
             match outcome {
                 GameOutcome::InProgress => {
-                    if is_engine_thinking {
+                    // The spinner also keeps egui repainting, which is what
+                    // delivers Stockfish's reply without the mouse moving.
+                    if status.engine_thinking {
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.label("Engine thinking...");
@@ -74,6 +85,10 @@ impl ControlPanel {
                 }
             }
 
+            if let Some(message) = status.message {
+                ui.label(message);
+            }
+
             ui.add_space(10.0);
 
             // New Game button
@@ -92,19 +107,14 @@ impl ControlPanel {
             // Play as
             ui.label("Play as:");
             ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(*player_color == PlayerColor::White, "White")
-                    .clicked()
+                for (color, label) in [(PlayerColor::White, "White"), (PlayerColor::Black, "Black")]
                 {
-                    *player_color = PlayerColor::White;
-                    action = Some(ControlAction::SetPlayerColor(PlayerColor::White));
-                }
-                if ui
-                    .selectable_label(*player_color == PlayerColor::Black, "Black")
-                    .clicked()
-                {
-                    *player_color = PlayerColor::Black;
-                    action = Some(ControlAction::SetPlayerColor(PlayerColor::Black));
+                    // Re-clicking the current color must not restart the game.
+                    if ui.selectable_label(player_color == color, label).clicked()
+                        && player_color != color
+                    {
+                        action = Some(ControlAction::SetPlayerColor(color));
+                    }
                 }
             });
 
@@ -150,7 +160,7 @@ impl ControlPanel {
                     }
                     let draw_button = ui
                         .add_enabled(
-                            is_engine_ready && !is_engine_thinking,
+                            status.engine_ready && !status.engine_thinking,
                             egui::Button::new("🤝 Offer Draw"),
                         )
                         .on_hover_text("Stockfish must be ready to evaluate a draw offer");
@@ -158,10 +168,11 @@ impl ControlPanel {
                         action = Some(ControlAction::OfferDraw);
                     }
                 });
+            }
 
-                if ui.button("↩ Undo Move").clicked() {
-                    action = Some(ControlAction::Undo);
-                }
+            // Undo stays available after the game ends, to retry a lost position.
+            if status.can_undo && ui.button("↩ Undo Move").clicked() {
+                action = Some(ControlAction::Undo);
             }
         });
 

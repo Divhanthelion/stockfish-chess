@@ -643,7 +643,9 @@ impl EngineActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -804,5 +806,64 @@ done
 
         drop(command_tx);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Plays a short game through the actor against a real engine, switching
+    /// strength every move. Run with a Stockfish on `PATH` or `STOCKFISH_PATH`:
+    /// `cargo test --locked -- --ignored`.
+    #[test]
+    #[ignore = "needs a real Stockfish; run with --ignored"]
+    fn plays_legal_moves_against_real_stockfish() {
+        use crate::engine::discover_stockfish;
+        use crate::game::{GameOutcome, GameState};
+
+        let path = discover_stockfish().expect("Stockfish not found");
+        let (command_tx, event_rx) = EngineActor::spawn(path);
+        command_tx.send(EngineCommand::Init).unwrap();
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_secs(15)).unwrap(),
+            EngineEvent::Ready
+        ));
+
+        let mut game = GameState::new();
+        let levels = [DifficultyLevel::Novice, DifficultyLevel::Maximum];
+        for (ply, level) in levels.iter().cycle().take(16).enumerate() {
+            if game.outcome() != GameOutcome::InProgress {
+                break;
+            }
+            let request = ply as u64 + 1;
+            command_tx
+                .send(EngineCommand::SetDifficulty(*level))
+                .unwrap();
+            command_tx
+                .send(EngineCommand::Go {
+                    request_id: request,
+                    fen: game.start_fen(),
+                    moves: game.uci_moves_to_current(),
+                    movetime_ms: Some(100),
+                })
+                .unwrap();
+
+            let best_move = loop {
+                match event_rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+                    EngineEvent::BestMove {
+                        request_id,
+                        best_move,
+                        ..
+                    } if request_id == request => break best_move,
+                    EngineEvent::Info { .. } => {}
+                    event => panic!("unexpected event: {event:?}"),
+                }
+            };
+            game.make_move_uci(&best_move)
+                .unwrap_or_else(|error| panic!("illegal engine move {best_move}: {error}"));
+        }
+
+        assert!(game.move_history().len() >= 10);
+        command_tx.send(EngineCommand::Quit).unwrap();
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            EngineEvent::Terminated
+        ));
     }
 }

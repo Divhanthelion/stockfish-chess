@@ -16,6 +16,8 @@ pub struct StudyPanel {
     current_comment: String,
     show_load_dialog: bool,
     export_pgn: bool,
+    /// Result of the last save, load, or export.
+    notice: Option<String>,
 }
 
 impl Default for StudyPanel {
@@ -31,6 +33,7 @@ impl Default for StudyPanel {
             current_comment: String::new(),
             show_load_dialog: false,
             export_pgn: false,
+            notice: None,
         }
     }
 }
@@ -45,6 +48,7 @@ impl StudyPanel {
             let pgn = study.to_pgn();
             ui.ctx().copy_text(pgn);
             self.export_pgn = false;
+            self.notice = Some("PGN copied to clipboard.".to_string());
         }
 
         ui.heading("Study");
@@ -130,8 +134,10 @@ impl StudyPanel {
             if ui.button("💾 Save").clicked() {
                 if let Err(e) = self.study_manager.save_study(study) {
                     tracing::error!("Failed to save study: {}", e);
+                    self.notice = Some(format!("Could not save study: {e}"));
                 } else {
                     self.available_studies = self.study_manager.list_studies().unwrap_or_default();
+                    self.notice = Some(format!("Saved \"{}\".", study.name));
                 }
             }
 
@@ -147,6 +153,10 @@ impl StudyPanel {
         // Export PGN
         if ui.button("📄 Export PGN").clicked() {
             self.export_pgn = true;
+        }
+
+        if let Some(notice) = &self.notice {
+            ui.label(notice);
         }
 
         // New study dialog
@@ -182,8 +192,15 @@ impl StudyPanel {
                     } else {
                         for (id, name) in self.available_studies.clone().iter() {
                             if ui.button(name).clicked() {
-                                if let Ok(loaded) = self.study_manager.load_study(id) {
-                                    *study = loaded;
+                                match self.study_manager.load_study(id) {
+                                    Ok(loaded) => {
+                                        *study = loaded;
+                                        self.notice = None;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to load study {id}: {e}");
+                                        self.notice = Some(format!("Could not load study: {e}"));
+                                    }
                                 }
                                 self.show_load_dialog = false;
                             }
