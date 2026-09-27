@@ -2,16 +2,19 @@
 
 ![Stockfish Chess analyzing a Ruy Lopez](assets/hero.png)
 
-A cross-platform desktop chess application built with Rust and egui. Chess rules
-are handled by `shakmaty`. Stockfish runs as a separate UCI engine process that
-you install yourself.
+A desktop chess app for **macOS and Windows**: play against Stockfish at seven
+strength levels, analyze positions, and build opening studies. It's built with
+Rust and egui, with chess rules handled by `shakmaty`.
 
-**Two different binaries:**
+Stockfish itself is a separate, free chess engine that you download once. The
+setup steps below cover both the app and the engine.
+
+**Two different programs:**
 
 | Command | What it is |
 | --- | --- |
-| `stockfish` | The Stockfish chess engine (UCI, no GUI) |
-| `stockfish-chess` | This Rust desktop app (GUI) |
+| `stockfish` | The Stockfish chess engine (no window of its own) |
+| `stockfish-chess` | This desktop app, which runs the engine for you |
 
 ## Features
 
@@ -25,119 +28,134 @@ you install yourself.
 - Study chapters, comments, variations, JSON persistence, and PGN export
 - User-visible engine startup and runtime errors
 
-## Prerequisites
+## Setup on macOS
 
-### Rust
+1. **Install Rust** (1.88 or newer):
 
-Install Rust 1.88 or newer:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-### Stockfish engine
-
-This app needs a Stockfish binary. The engine is **not** included in the
-repository. Source it from one of these places:
-
-1. **Homebrew (recommended on macOS)**
+2. **Install Stockfish** with [Homebrew](https://brew.sh):
 
    ```bash
    brew install stockfish
    ```
 
-   That installs `stockfish` to `/opt/homebrew/bin` (Apple Silicon) or
-   `/usr/local/bin` (Intel), which is already searched by this app.
+   The app finds Homebrew's Stockfish automatically.
 
-2. **Official download**
-
-   Download from the
-   [Stockfish downloads page](https://stockfishchess.org/download/)
-   or the matching asset on the
-   [GitHub releases](https://github.com/official-stockfish/Stockfish/releases)
-   page. Prefer the binary that matches your OS and CPU
-   (for example `stockfish-macos-m1-apple-silicon` on Apple Silicon).
-
-3. **Linux package managers**
-
-   Many distributions package Stockfish. Examples:
+   Without Homebrew, download `stockfish-macos-universal.tar.gz` from the
+   [Stockfish downloads page](https://stockfishchess.org/download/) or
+   [GitHub releases](https://github.com/official-stockfish/Stockfish/releases),
+   extract it, and move the file whose name starts with `stockfish` into
+   `~/bin`. macOS blocks downloaded programs until you allow them:
 
    ```bash
-   # Debian / Ubuntu
-   sudo apt install stockfish
-
-   # Fedora
-   sudo dnf install stockfish
+   chmod +x ~/bin/stockfish*
+   xattr -d com.apple.quarantine ~/bin/stockfish*
    ```
 
-#### Where to place a downloaded binary
+3. **Build and install the app**, then run it:
 
-If you did not install via a package manager, put an executable named
-`stockfish` (or leave the official download name) in one of these locations:
+   ```bash
+   git clone https://github.com/Divhanthelion/stockfish-chess.git
+   cd stockfish-chess
+   cargo install --path . --locked
+   stockfish-chess
+   ```
 
-1. The path in the `STOCKFISH_PATH` environment variable
-2. Next to the `stockfish-chess` application executable
+## Setup on Windows
+
+1. **Install Rust**: download and run `rustup-init.exe` from
+   [rustup.rs](https://rustup.rs). When it offers to install the Visual Studio
+   C++ Build Tools, accept; Rust needs them on Windows. Open a new PowerShell
+   window afterwards.
+
+2. **Build and install the app** in PowerShell:
+
+   ```powershell
+   git clone https://github.com/Divhanthelion/stockfish-chess.git
+   cd stockfish-chess
+   cargo install --path . --locked
+   ```
+
+   This puts `stockfish-chess.exe` in `%USERPROFILE%\.cargo\bin`, which the
+   Rust installer added to your `PATH`.
+
+3. **Get Stockfish**: download `stockfish-windows-x86-64-universal.zip` from the
+   [Stockfish downloads page](https://stockfishchess.org/download/) or
+   [GitHub releases](https://github.com/official-stockfish/Stockfish/releases)
+   (use `stockfish-windows-arm64-universal.zip` on an ARM PC). Extract it. The
+   engine is the `.exe` inside its `stockfish` folder. Copy **just that `.exe`**
+   next to the app; the folder's other files aren't needed. If you used
+   Explorer's **Extract All** in your Downloads folder, this does it:
+
+   ```powershell
+   Copy-Item "$HOME\Downloads\stockfish-windows-x86-64-universal\stockfish\stockfish-windows-x86-64-universal.exe" "$HOME\.cargo\bin\"
+   ```
+
+   No renaming is needed.
+
+4. **Run it**:
+
+   ```powershell
+   stockfish-chess
+   ```
+
+## Linux
+
+Linux works too and is tested in CI. Install Rust with the macOS command above,
+install Stockfish from your package manager (`sudo apt install stockfish` or
+`sudo dnf install stockfish`), then build as on macOS. Building needs the GTK,
+xkbcommon, Wayland, and X11 development packages.
+
+## Where the app looks for Stockfish
+
+The app checks these places in order and uses the first Stockfish it finds:
+
+1. The file in the `STOCKFISH_PATH` environment variable
+2. Next to the `stockfish-chess` application
 3. The current working directory
 4. `~/bin`
-5. Common Homebrew and Unix binary directories
-   (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`)
-6. Any directory on your system `PATH`
+5. On macOS and Linux: `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`
+6. Any directory on your `PATH`
 
-Official filenames beginning with `stockfish`, such as
-`stockfish-macos-m1-apple-silicon`, are recognized without being renamed.
+Official file names such as `stockfish-macos-universal` or
+`stockfish-windows-x86-64-universal.exe` are recognized without renaming. On
+Windows the engine must be the `.exe` file.
 
-To point at a custom location:
+To use a Stockfish stored somewhere else:
 
 ```bash
 STOCKFISH_PATH="/path/to/stockfish" stockfish-chess
 ```
 
-On Windows (PowerShell), use the `.exe` from the official zip:
-
 ```powershell
 $env:STOCKFISH_PATH = "C:\path\to\stockfish-windows-x86-64-universal.exe"; stockfish-chess
 ```
 
-On macOS, a browser download may need executable permission and quarantine
-removal:
+If the app can't find or start Stockfish, the sidebar shows the full error and
+a setup hint.
+
+## Running from Source
+
+To run without installing, from the repository:
 
 ```bash
-chmod +x /path/to/stockfish
-xattr -d com.apple.quarantine /path/to/stockfish
+cargo run --release --locked
 ```
 
-If discovery or startup fails, the full error and setup hint appear in the
-application sidebar.
-
-## Build and Run
-
-From the repository:
-
-```bash
-cargo run --locked
-```
-
-Optimized release build:
-
-```bash
-cargo build --release --locked
-./target/release/stockfish-chess
-```
-
-Install the GUI onto your `PATH` (`~/.cargo/bin`):
-
-```bash
-cargo install --path . --locked --force
-stockfish-chess
-```
-
-Use `--locked` so dependency resolution matches `Cargo.lock` and your current
-Rust toolchain.
+Debug builds (`cargo run --locked`) compile faster but play noticeably slower.
+Use `--locked` so dependencies match `Cargo.lock`.
 
 Enable logs when troubleshooting:
 
 ```bash
 RUST_LOG=info cargo run --locked
+```
+
+```powershell
+$env:RUST_LOG = "info"; cargo run --locked
 ```
 
 ## Playing
@@ -213,7 +231,7 @@ UCI over stdin/stdout. The UI remains responsive while Stockfish searches.
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
@@ -232,7 +250,9 @@ cargo test --locked -- --ignored
 
 ### Stockfish unavailable
 
-- Prefer `brew install stockfish` on macOS, then confirm `which stockfish`.
+- macOS: prefer `brew install stockfish`, then confirm `which stockfish`.
+- Windows: copy the `.exe` itself next to `stockfish-chess.exe`, not the
+  extracted folder; `Get-Command stockfish*` lists it if it's on `PATH`.
 - Confirm `STOCKFISH_PATH` points to a file, not a directory.
 - Confirm the binary is executable and matches your machine architecture.
 - Read the detailed startup error in the sidebar or run with `RUST_LOG=info`.
