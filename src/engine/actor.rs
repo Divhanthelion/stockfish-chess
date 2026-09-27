@@ -257,6 +257,15 @@ impl EngineActor {
             command.current_dir(stockfish_dir);
         }
 
+        // Stockfish is a console program; without this, Windows opens a
+        // console window for it when the app itself has none.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

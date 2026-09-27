@@ -1,3 +1,7 @@
+// Release builds on Windows are GUI programs, so launching the app doesn't
+// open a console window. Debug builds keep the console for `RUST_LOG` output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod engine;
 mod game;

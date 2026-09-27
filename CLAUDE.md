@@ -22,6 +22,8 @@ Environment variables (`STOCKFISH_PATH`, `RUST_LOG`, `STOCKFISH_CHESS_HERO`) use
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy with `-D warnings`, and tests on ubuntu-latest, windows-latest, and macos-latest using the **stable** toolchain, so a new stable clippy lint can fail CI without any code change.
 
+On Windows, release builds use the GUI subsystem (`windows_subsystem` in `src/main.rs`), so they have no console: `RUST_LOG` output is only visible from debug builds, and the engine is spawned with `CREATE_NO_WINDOW` so Stockfish doesn't open a console of its own.
+
 Platform differences in tests: `stop_interrupts_a_silent_analysis` and `stopped_search_has_a_deadline` are `#[cfg(unix)]` (they run a shell-script fake engine); discovery tests use platform-specific file names.
 
 ### README hero screenshot
